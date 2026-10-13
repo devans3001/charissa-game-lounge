@@ -1,0 +1,209 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "System users including Admins, Managers, and Cashiers.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "username": { "type": "string" },
+        "fullName": { "type": "string" },
+        "role": { "type": "string", "enum": ["ADMIN", "MANAGER", "CASHIER"] },
+        "isActive": { "type": "boolean" },
+        "passwordHash": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "username", "fullName", "role", "isActive"]
+    },
+    "Game": {
+      "title": "Game",
+      "description": "Game catalog item with pricing, category, and coin requirement.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string", "enum": ["PLAYSTATION", "SNOOKER", "COIN_ARCADE", "VR_RACING", "BOARD_GAME", "OTHER"] },
+        "price": { "type": "number" },
+        "durationMinutes": { "type": "number" },
+        "coinsRequired": { "type": "number" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "category", "price", "active"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Completed or voided game sale transaction.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "receiptNumber": { "type": "string" },
+        "gameId": { "type": "string" },
+        "gameName": { "type": "string" },
+        "gameCategory": { "type": "string" },
+        "quantity": { "type": "number" },
+        "coinsUsed": { "type": "number" },
+        "customerName": { "type": "string" },
+        "tabId": { "type": "string" },
+        "tabNumber": { "type": "string" },
+        "items": { "type": "array" },
+        "amount": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["CASH", "POS", "BANK_TRANSFER"] },
+        "paymentReference": { "type": "string" },
+        "senderName": { "type": "string" },
+        "cashierId": { "type": "string" },
+        "cashierName": { "type": "string" },
+        "status": { "type": "string", "enum": ["COMPLETED", "VOIDED", "CORRECTED"] },
+        "timestamp": { "type": "string" },
+        "date": { "type": "string" }
+      },
+      "required": ["id", "receiptNumber", "amount", "paymentMethod", "cashierId", "status", "timestamp", "date"]
+    },
+    "CustomerTab": {
+      "title": "CustomerTab",
+      "description": "Active open tab for a customer playing multiple games before settling.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tabNumber": { "type": "string" },
+        "customerName": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "stationOrNote": { "type": "string" },
+        "cashierId": { "type": "string" },
+        "cashierName": { "type": "string" },
+        "status": { "type": "string", "enum": ["OPEN", "PAID", "CANCELLED"] },
+        "items": { "type": "array" },
+        "totalAmount": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "date": { "type": "string" }
+      },
+      "required": ["id", "tabNumber", "customerName", "cashierId", "status", "items", "totalAmount", "date"]
+    },
+    "CoinAllocation": {
+      "title": "CoinAllocation",
+      "description": "Bulk arcade coin allocation from Admin to a Cashier for shift balance tracking.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "cashierId": { "type": "string" },
+        "cashierName": { "type": "string" },
+        "allocatedBy": { "type": "string" },
+        "allocatedByName": { "type": "string" },
+        "initialCoins": { "type": "number" },
+        "notes": { "type": "string" },
+        "date": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "status": { "type": "string", "enum": ["ACTIVE", "CLOSED"] }
+      },
+      "required": ["id", "cashierId", "allocatedBy", "initialCoins", "date", "timestamp", "status"]
+    },
+    "CoinCompensation": {
+      "title": "CoinCompensation",
+      "description": "Power outage or machine error coin replacement issued to a customer.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "cashierId": { "type": "string" },
+        "cashierName": { "type": "string" },
+        "customerName": { "type": "string" },
+        "gameName": { "type": "string" },
+        "coinsIssued": { "type": "number" },
+        "reason": { "type": "string" },
+        "date": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "cashierId", "customerName", "coinsIssued", "reason", "date", "timestamp"]
+    },
+    "BankAccount": {
+      "title": "BankAccount",
+      "description": "Up to 3 bank account details set by Admin for customer transfers.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "bankName": { "type": "string" },
+        "accountNumber": { "type": "string" },
+        "accountName": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "updatedAt": { "type": "string" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["id", "bankName", "accountNumber", "accountName", "isActive"]
+    },
+    "DailyReconciliation": {
+      "title": "DailyReconciliation",
+      "description": "End-of-day shift sign-off and balance reconciliation.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "totalSales": { "type": "number" },
+        "cashAmount": { "type": "number" },
+        "posAmount": { "type": "number" },
+        "transferAmount": { "type": "number" },
+        "coinsAllocated": { "type": "number" },
+        "coinsSold": { "type": "number" },
+        "coinsCompensated": { "type": "number" },
+        "coinsRemaining": { "type": "number" },
+        "coinDiscrepancy": { "type": "number" },
+        "status": { "type": "string", "enum": ["PENDING", "APPROVED", "REJECTED"] },
+        "submittedBy": { "type": "string" },
+        "submittedAt": { "type": "string" }
+      },
+      "required": ["id", "date", "totalSales", "status", "submittedBy"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable compliance and activity record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "action": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "details": { "type": "object" },
+        "ipAddress": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "action", "userId", "userName", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "System users and access credentials."
+    },
+    "/games/{gameId}": {
+      "schema": { "$ref": "#/entities/Game" },
+      "description": "Game catalog items."
+    },
+    "/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/Transaction" },
+      "description": "Completed and voided game sale transactions."
+    },
+    "/customerTabs/{tabId}": {
+      "schema": { "$ref": "#/entities/CustomerTab" },
+      "description": "Customer tabs for ongoing game plays."
+    },
+    "/coinAllocations/{allocationId}": {
+      "schema": { "$ref": "#/entities/CoinAllocation" },
+      "description": "Admin coin allocations to cashiers."
+    },
+    "/coinCompensations/{compensationId}": {
+      "schema": { "$ref": "#/entities/CoinCompensation" },
+      "description": "Power loss coin replacements."
+    },
+    "/bankAccounts/{accountId}": {
+      "schema": { "$ref": "#/entities/BankAccount" },
+      "description": "Bank account details for customer transfers."
+    },
+    "/reconciliations/{reconId}": {
+      "schema": { "$ref": "#/entities/DailyReconciliation" },
+      "description": "Daily reconciliation records."
+    },
+    "/auditLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Immutable audit trails."
+    }
+  }
+}

@@ -1,0 +1,72 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Default deny all other unspecified collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Users (Admin, Cashiers)
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+
+    // Games catalog
+    match /games/{gameId} {
+      allow read, write: if true;
+    }
+
+    // Transactions - Deletion strictly blocked
+    match /transactions/{transactionId} {
+      allow read, create, update: if true;
+      allow delete: if false;
+    }
+
+    // Customer Tabs
+    match /customerTabs/{tabId} {
+      allow read, write: if true;
+    }
+
+    // Coin Allocations (Bulk coins given by Admin)
+    match /coinAllocations/{allocationId} {
+      allow read, write: if true;
+    }
+
+    // Coin Compensations (Power outage / machine error coin replacement)
+    match /coinCompensations/{compensationId} {
+      allow read, create, update: if true;
+      allow delete: if false;
+    }
+
+    // Bank Accounts (Up to 3 accounts set by Admin for customer transfers)
+    match /bankAccounts/{accountId} {
+      allow read, write: if true;
+    }
+
+    // Daily Reconciliations
+    match /reconciliations/{reconId} {
+      allow read, write: if true;
+    }
+
+    // Audit Logs - IMMUTABLE (Cannot be modified or deleted)
+    match /auditLogs/{logId} {
+      allow read, create: if true;
+      allow update, delete: if false;
+    }
+
+    // Test connection doc
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+
+    // App metadata and counters
+    match /meta/{metaId} {
+      allow read, write: if true;
+    }
+  }
+}

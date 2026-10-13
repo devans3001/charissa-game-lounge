@@ -1,0 +1,266 @@
+{
+  "users": [
+    {
+      "id": "usr_admin_master",
+      "username": "admin",
+      "name": "Super Admin (Manager)",
+      "role": "ADMIN",
+      "isActive": true,
+      "mustChangePassword": false,
+      "createdBy": null,
+      "createdAt": "2026-10-12T10:58:32.838Z",
+      "lastLoginAt": "2026-10-12T11:36:27.453Z",
+      "passwordHash": "$2b$10$A1eJvtyz73xOQYff2lwMce/c.yDpph3IY6gsGAkcjJSHaEXBPNkrq"
+    },
+    {
+      "id": "usr_cashier_1791803832486",
+      "username": "alvin",
+      "name": "ALVIN",
+      "phoneNumber": "08050870100",
+      "role": "CASHIER",
+      "isActive": true,
+      "mustChangePassword": true,
+      "createdBy": "usr_admin_master",
+      "createdAt": "2026-10-12T11:17:12.486Z",
+      "passwordHash": "$2b$10$YGykDjkLEzIRciy6F6zeM.5K0oSWNOZycoreiIIPqWhZ4AkHUvrVG",
+      "lastLoginAt": "2026-10-12T12:00:13.571Z"
+    }
+  ],
+  "games": [
+    {
+      "id": "game_ps_fifa24",
+      "name": "FIFA 24",
+      "category": "PS_GAME",
+      "description": "PlayStation 5 tournament edition, 1v1 match play",
+      "isActive": true,
+      "standardPriceKobo": 150000,
+      "coinsRequired": 0,
+      "pricePerCoinKobo": 0,
+      "calculatedPriceKobo": 150000,
+      "createdBy": "usr_admin_master",
+      "updatedBy": "usr_admin_master",
+      "createdAt": "2026-10-12T10:58:32.838Z",
+      "updatedAt": "2026-10-12T10:58:32.838Z"
+    },
+    {
+      "id": "game_ps_mk1",
+      "name": "Mortal Kombat 1",
+      "category": "PS_GAME",
+      "description": "PlayStation 5 versus battle edition",
+      "isActive": true,
+      "standardPriceKobo": 150000,
+      "coinsRequired": 0,
+      "pricePerCoinKobo": 0,
+      "calculatedPriceKobo": 150000,
+      "createdBy": "usr_admin_master",
+      "updatedBy": "usr_admin_master",
+      "createdAt": "2026-10-12T10:58:32.838Z",
+      "updatedAt": "2026-10-12T10:58:32.838Z"
+    },
+    {
+      "id": "game_ps_tekken8",
+      "name": "Tekken 8",
+      "category": "PS_GAME",
+      "description": "PlayStation 5 arcade mode",
+      "isActive": true,
+      "standardPriceKobo": 150000,
+      "coinsRequired": 0,
+      "pricePerCoinKobo": 0,
+      "calculatedPriceKobo": 150000,
+      "createdBy": "usr_admin_master",
+      "updatedBy": "usr_admin_master",
+      "createdAt": "2026-10-12T10:58:32.838Z",
+      "updatedAt": "2026-10-12T10:58:32.838Z"
+    },
+    {
+      "id": "game_snooker_standard",
+      "name": "Snooker (1 Frame)",
+      "category": "SNOOKER",
+      "description": "Standard 12ft full table frame session",
+      "isActive": true,
+      "standardPriceKobo": 100000,
+      "coinsRequired": 0,
+      "pricePerCoinKobo": 0,
+      "calculatedPriceKobo": 100000,
+      "createdBy": "usr_admin_master",
+      "updatedBy": "usr_admin_master",
+      "createdAt": "2026-10-12T10:58:32.838Z",
+      "updatedAt": "2026-10-12T10:58:32.838Z"
+    },
+    {
+      "id": "game_coin_carracing",
+      "name": "Car Racing (Arcade)",
+      "category": "COIN_GAME",
+      "description": "Motion simulator cockpit arcade machine",
+      "isActive": true,
+      "standardPriceKobo": 0,
+      "coinsRequired": 4,
+      "pricePerCoinKobo": 50000,
+      "calculatedPriceKobo": 200000,
+      "createdBy": "usr_admin_master",
+      "updatedBy": "usr_admin_master",
+      "createdAt": "2026-10-12T10:58:32.838Z",
+      "updatedAt": "2026-10-12T10:58:32.838Z"
+    },
+    {
+      "id": "game_coin_bikeracing",
+      "name": "Bike Racing (MotoGP)",
+      "category": "COIN_GAME",
+      "description": "Superbike simulation arcade cabinet",
+      "isActive": true,
+      "standardPriceKobo": 0,
+      "coinsRequired": 2,
+      "pricePerCoinKobo": 50000,
+      "calculatedPriceKobo": 100000,
+      "createdBy": "usr_admin_master",
+      "updatedBy": "usr_admin_master",
+      "createdAt": "2026-10-12T10:58:32.838Z",
+      "updatedAt": "2026-10-12T10:58:32.838Z"
+    },
+    {
+      "id": "game_coin_basketball",
+      "name": "Hoop Mania Basketball",
+      "category": "COIN_GAME",
+      "description": "Coin-operated electronic basketball shootout",
+      "isActive": true,
+      "standardPriceKobo": 0,
+      "coinsRequired": 3,
+      "pricePerCoinKobo": 50000,
+      "calculatedPriceKobo": 150000,
+      "createdBy": "usr_admin_master",
+      "updatedBy": "usr_admin_master",
+      "createdAt": "2026-10-12T10:58:32.838Z",
+      "updatedAt": "2026-10-12T10:58:32.838Z"
+    }
+  ],
+  "transactions": [],
+  "reconciliations": [],
+  "correctionRequests": [],
+  "auditLogs": [
+    {
+      "id": "audit_237a5eee-260c-40b4-9f6f-752fcc2d8a60",
+      "actorId": "usr_cashier_1791803832486",
+      "actorName": "ALVIN",
+      "actorRole": "CASHIER",
+      "action": "TAB_CHECKOUT",
+      "entityType": "TRANSACTION",
+      "entityId": "txn_b4d96ed8-64ed-4c22-8841-085ac6020226",
+      "newValues": {
+        "receiptNumber": "GL-20261012-1001",
+        "tabNumber": "TAB-101",
+        "customerName": "Emeka",
+        "itemCount": 2,
+        "totalAmountKobo": 450000,
+        "paymentMethod": "CASH",
+        "cashierName": "ALVIN"
+      },
+      "timestamp": "2026-10-12T12:00:13.603Z",
+      "businessDate": "2026-10-12"
+    },
+    {
+      "id": "audit_0e3ad27a-71ff-448b-bf73-22927311765b",
+      "actorId": "usr_cashier_1791803832486",
+      "actorName": "ALVIN",
+      "actorRole": "CASHIER",
+      "action": "TAB_CREATED",
+      "entityType": "TRANSACTION",
+      "entityId": "tab_985d02be-96ec-4c5b-b0a9-c1ccee601051",
+      "newValues": {
+        "tabNumber": "TAB-101",
+        "customerName": "Emeka",
+        "totalAmountKobo": 450000,
+        "itemCount": 2
+      },
+      "timestamp": "2026-10-12T12:00:08.696Z",
+      "businessDate": "2026-10-12"
+    },
+    {
+      "id": "audit_fe09de71-84a4-45d3-9dfd-03fdb6110cf5",
+      "actorId": "usr_cashier_1791803832486",
+      "actorName": "ALVIN",
+      "actorRole": "CASHIER",
+      "action": "PASSWORD_CHANGED",
+      "entityType": "USER",
+      "entityId": "usr_cashier_1791803832486",
+      "reason": "User updated their account password",
+      "timestamp": "2026-10-12T11:36:37.098Z",
+      "businessDate": "2026-10-12"
+    },
+    {
+      "id": "audit_7c0b7bbd-fdb0-4505-9fbb-94f2aeafde5e",
+      "actorId": "usr_admin_master",
+      "actorName": "Super Admin (Manager)",
+      "actorRole": "ADMIN",
+      "action": "CASHIER_STATUS_CHANGED",
+      "entityType": "USER",
+      "entityId": "usr_cashier_1791803832486",
+      "previousValues": {
+        "isActive": false
+      },
+      "newValues": {
+        "isActive": true
+      },
+      "reason": "Cashier account activated",
+      "timestamp": "2026-10-12T11:17:28.306Z",
+      "businessDate": "2026-10-12"
+    },
+    {
+      "id": "audit_55f8da6b-9c88-4648-88f3-784d48706dfe",
+      "actorId": "usr_admin_master",
+      "actorName": "Super Admin (Manager)",
+      "actorRole": "ADMIN",
+      "action": "CASHIER_STATUS_CHANGED",
+      "entityType": "USER",
+      "entityId": "usr_cashier_1791803832486",
+      "previousValues": {
+        "isActive": true
+      },
+      "newValues": {
+        "isActive": false
+      },
+      "reason": "Cashier account deactivated",
+      "timestamp": "2026-10-12T11:17:25.539Z",
+      "businessDate": "2026-10-12"
+    },
+    {
+      "id": "audit_5e6c236c-ac93-4fb7-8144-c6437cd3ae2a",
+      "actorId": "usr_admin_master",
+      "actorName": "Super Admin (Manager)",
+      "actorRole": "ADMIN",
+      "action": "CASHIER_CREATED",
+      "entityType": "USER",
+      "entityId": "usr_cashier_1791803832486",
+      "newValues": {
+        "username": "08050870100",
+        "name": "ALVIN",
+        "phoneNumber": "08050870100",
+        "role": "CASHIER",
+        "mustChangePassword": true
+      },
+      "reason": "Cashier created with phone number as default password and mustChangePassword prompt",
+      "timestamp": "2026-10-12T11:17:12.487Z",
+      "businessDate": "2026-10-12"
+    },
+    {
+      "id": "audit_sys_init",
+      "actorId": "usr_admin_master",
+      "actorName": "System Bootstrap",
+      "actorRole": "SYSTEM",
+      "action": "SYSTEM_INITIALIZED",
+      "entityType": "SYSTEM",
+      "entityId": "system_root",
+      "newValues": {
+        "message": "Initialized Game Lounge Database with standard catalog and admin credentials."
+      },
+      "timestamp": "2026-10-12T10:58:32.838Z",
+      "businessDate": "2026-10-12"
+    }
+  ],
+  "meta": {
+    "initialized": true,
+    "version": 1,
+    "lastReceiptSeq": 1001,
+    "lastTabSeq": 101
+  },
+  "customerTabs": []
+}

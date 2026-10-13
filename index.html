@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Game Lounge Revenue & POS Manager</title>
+    <meta name="description" content="Full-stack physical game lounge management and revenue tracking system with real-time cashier sales, PS & coin pricing, daily POS reconciliation, audit logs, and printable reporting." />
+    <meta property="og:title" content="Game Lounge Revenue & POS Manager" />
+    <meta property="og:description" content="Full-stack physical game lounge management and revenue tracking system with real-time cashier sales, PS & coin pricing, daily POS reconciliation, audit logs, and printable reporting." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <script>
+      // In AI Studio sandbox, HMR WebSocket is disabled. Intercept any transport connection errors.
+      window.addEventListener('error', function(e) {
+        var msg = (e && e.message) ? String(e.message) : '';
+        var file = (e && e.filename) ? String(e.filename) : '';
+        if (msg.indexOf('WebSocket') !== -1 || msg.indexOf('createWebSocketModuleRunnerTransport') !== -1 || file.indexOf('@vite/client') !== -1) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+        }
+      }, true);
+      window.addEventListener('unhandledrejection', function(e) {
+        var reason = (e && e.reason) ? String(e.reason) : '';
+        if (reason.indexOf('WebSocket') !== -1 || reason.indexOf('createWebSocketModuleRunnerTransport') !== -1) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+        }
+      }, true);
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  </head>
+  <body class="bg-slate-900 text-slate-100 antialiased selection:bg-indigo-500 selection:text-white">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

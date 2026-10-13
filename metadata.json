@@ -1,0 +1,6 @@
+{
+  "name": "Game Lounge Revenue & POS Manager",
+  "description": "Full-stack physical game lounge management and revenue tracking system with real-time cashier sales, PS & coin pricing, daily POS reconciliation, audit logs, and printable reporting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
