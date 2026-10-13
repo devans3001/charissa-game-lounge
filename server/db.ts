@@ -73,6 +73,47 @@ export function getLagosIsoString(date: Date = new Date()): string {
 
 let firestoreInstance: Firestore | null = null;
 
+// Collections that MUST be readable/writable for the app to work correctly.
+// A blocked read here used to fail silently (the UI showed an empty list and
+// the user thought nothing had been saved), so it is probed at boot and any
+// problem is printed with the exact fix.
+const RULES_PROBE = [
+  { name: 'correctionRequests', hint: 'cashier Flag Fix requests (Fix Requests screen)' },
+  { name: 'appSettings', hint: 'global coin price', isDoc: true },
+  { name: 'transactions', hint: 'sales ledger', isDoc: false },
+  { name: 'coinAllocations', hint: 'coin vault float allocations' },
+  { name: 'coinCompensations', hint: 'lost-coin records' },
+] as const;
+
+export async function probeFirestoreRules(): Promise<void> {
+  const fsDb = getFirestore();
+  const problems: string[] = [];
+
+  for (const probe of RULES_PROBE) {
+    try {
+      if ((probe as any).isDoc) {
+        await getDoc(doc(fsDb, probe.name, 'general'));
+      } else {
+        await getDocs(collection(fsDb, probe.name));
+      }
+    } catch (err: any) {
+      problems.push(`  ✗ ${probe.name} — ${probe.hint}: ${err?.message || err}`);
+    }
+  }
+
+  if (problems.length === 0) {
+    console.log('[Firestore] Rules probe OK — all critical collections are reachable.');
+    return;
+  }
+
+  console.error('');
+  console.error('[Firestore] ⚠️  RULES NOT DEPLOYED — these features will silently fail:');
+  for (const p of problems) console.error(p);
+  console.error('[Firestore] Fix: deploy the rules in firestore.rules, then restart:');
+  console.error('[Firestore]   firebase deploy --only firestore:rules');
+  console.error('');
+}
+
 export function getFirestore(): Firestore {
   if (firestoreInstance) return firestoreInstance;
   const cfgPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
@@ -240,6 +281,11 @@ export async function saveDb(db: DbSchema): Promise<void> {
   const fsDb = getFirestore();
   const prev = loadSnapshots.get(db);
   const writes: Promise<void>[] = [];
+  // Writes that MUST succeed. A failure here means the caller's change was
+  // silently dropped — historically this looked like a "success" response with
+  // nothing persisted (e.g. a cashier's Flag Fix request vanishing), so it is
+  // surfaced loudly as an error instead of being swallowed.
+  const writeFailures: string[] = [];
 
   for (const coll of COLLECTIONS) {
     const prevMap: Map<string, string> = prev?.[coll] ?? new Map();
@@ -252,6 +298,7 @@ export async function saveDb(db: DbSchema): Promise<void> {
       if (prevMap.get(docData.id) !== json) {
         writes.push(
           setDoc(doc(fsDb, coll, docData.id), cleanDoc(docData), { merge: true }).catch((err: any) => {
+            writeFailures.push(`${coll}/${docData.id}: ${err?.message || err}`);
             console.error(`[Firestore] Failed writing ${coll}/${docData.id}:`, err?.message || err);
           })
         );
@@ -272,6 +319,13 @@ export async function saveDb(db: DbSchema): Promise<void> {
   }
 
   await Promise.all(writes);
+
+  if (writeFailures.length > 0) {
+    throw new Error(
+      `Save failed — Firestore rejected ${writeFailures.length} write(s). Deploy the latest firestore.rules ` +
+        `(firebase deploy --only firestore:rules), then retry. First failure: ${writeFailures[0]}`
+    );
+  }
 
   // meta/system counters: monotonic — never allowed to move backwards
   await persistMeta(db.meta);

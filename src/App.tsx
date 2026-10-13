@@ -53,7 +53,9 @@ function MainApp() {
           onNavigateToNewSale={() => setActiveTab('newsale')}
         />
       )}
-      {activeTab === 'transactions' && <TransactionsView />}
+      {activeTab === 'transactions' && (
+        <TransactionsView onNavigateToFixRequests={() => setActiveTab('correction_requests')} />
+      )}
       {activeTab === 'reconciliation' && (isAdmin ? <ReconciliationView /> : <DashboardView />)}
       {activeTab === 'games' && (isAdmin ? <GameManagementView /> : <NewSaleView />)}
       {activeTab === 'cashiers' && (isAdmin ? <CashierManagementView /> : <DashboardView />)}

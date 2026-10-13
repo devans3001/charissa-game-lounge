@@ -75,6 +75,10 @@ export interface Transaction {
   voidedBy?: string;
   voidedByName?: string;
   voidedAt?: string;
+  // COIN_GAME voids only: did the physical coins physically go back into the
+  // cashier's drawer? true = returned to the float, false/undefined = already
+  // dispensed or lost, so they stay deducted.
+  coinsReturnedToDrawer?: boolean;
   correctionNote?: string;
   correctedBy?: string;
   correctedByName?: string;
@@ -229,9 +233,11 @@ export interface CashierCoinBalance {
   businessDate: string;
   allocatedCoins: number;
   soldCoins: number;           // coins consumed by non-voided COIN_GAME sales
-  voidedCoins: number;         // coins consumed by VOIDED sales (e.g. coin stuck in machine) — still deducted from float
+  voidedCoins: number;         // coins on VOIDED sales, split into returned (credited back) and lost (still deducted)
+  voidedReturnedCoins: number; // voided sales where the coins went back into the drawer — NOT deducted
+  voidedLostCoins: number;     // voided sales where the coins were dispensed/lost — still deducted
   compensatedCoins: number;    // replacement coins issued free (power outage etc.)
-  expectedRemainingCoins: number; // allocated - sold - voided - compensated
+  expectedRemainingCoins: number; // allocated - sold - voidedLost - compensated
   actualRemainingCoins?: number;
   discrepancyCoins?: number;
   notes?: string;
@@ -289,6 +295,8 @@ export interface DashboardStats {
     totalAllocated: number;
     totalSold: number;
     totalVoided: number;
+    totalVoidedReturned: number; // voided coins credited back to the drawer
+    totalVoidedLost: number;     // voided coins still deducted from the float
     totalCompensated: number;
     totalRemaining: number;
   };

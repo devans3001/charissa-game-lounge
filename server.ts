@@ -3,11 +3,15 @@ import http from 'http';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import apiRouter from './server/api.ts';
-import { initFirestoreDb } from './server/db.ts';
+import { initFirestoreDb, probeFirestoreRules } from './server/db.ts';
 
 async function startServer() {
   // Initialize Firestore database connection and initial migration/loading
   await initFirestoreDb();
+  // Fail loudly (not silently) if the deployed security rules block a
+  // collection the app depends on — e.g. correctionRequests would make a
+  // cashier's "Flag Fix" request disappear without any error.
+  await probeFirestoreRules();
 
   const app = express();
   const PORT = parseInt(process.env.PORT || '3000', 10);

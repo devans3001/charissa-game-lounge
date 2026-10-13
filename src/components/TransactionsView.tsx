@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Transaction, PaymentMethod, GameCategory, TransactionStatus } from '../types/index.ts';
+import { Transaction, PaymentMethod, GameCategory, TransactionStatus, CorrectionRequest } from '../types/index.ts';
 import { api } from '../lib/api.ts';
 import { formatNaira, formatLagosDateTime, formatLagosDate } from '../lib/utils.ts';
 import { useAuth } from '../context/AuthContext.tsx';
@@ -21,10 +21,16 @@ import {
   FileQuestion,
   LayoutGrid,
   List,
-  SlidersHorizontal
+  SlidersHorizontal,
+  BookmarkCheck,
+  Clock3
 } from 'lucide-react';
 
-export function TransactionsView() {
+interface TransactionsViewProps {
+  onNavigateToFixRequests?: () => void;
+}
+
+export function TransactionsView({ onNavigateToFixRequests }: TransactionsViewProps = {}) {
   const { user } = useAuth();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [total, setTotal] = useState<number>(0);
@@ -32,6 +38,72 @@ export function TransactionsView() {
   const [totalPages, setTotalPages] = useState<number>(1);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [successToast, setSuccessToast] = useState<string | null>(null);
+
+  // Correction requests (cashier "Flag Fix" submissions) so the ledger can show flag state
+  const [correctionRequests, setCorrectionRequests] = useState<CorrectionRequest[]>([]);
+
+  const showToast = (msg: string) => {
+    setSuccessToast(msg);
+    setTimeout(() => setSuccessToast(null), 4500);
+  };
+
+  // Does this transaction carry physical coins? (drives the void coin question)
+  const isCoinTxn = (t: Transaction | null): boolean => {
+    if (!t) return false;
+    if (Array.isArray(t.items) && t.items.length > 0) {
+      return t.items.some(it => it.gameCategory === 'COIN_GAME');
+    }
+    return t.gameCategory === 'COIN_GAME';
+  };
+
+  // Coins on a transaction (single-item or multi-item)
+  const coinCountOf = (t: Transaction | null): number => {
+    if (!t) return 0;
+    if (Array.isArray(t.items) && t.items.length > 0) {
+      return t.items
+        .filter(it => it.gameCategory === 'COIN_GAME')
+        .reduce((s, it) => s + (it.coinsRequiredSnapshot || 0) * (it.quantity || 1), 0);
+    }
+    return t.gameCategory === 'COIN_GAME' ? (t.coinsRequiredSnapshot || 0) * (t.quantity || 1) : 0;
+  };
+
+  // Badge showing whether a sale has a pending/approved/rejected fix request
+  const renderFixFlag = (txnId: string) => {
+    const req = requestsByTxn.get(txnId);
+    if (!req) return null;
+    const label =
+      req.status === 'PENDING'
+        ? 'FIX REQUESTED'
+        : req.status === 'APPROVED'
+        ? 'FIX APPROVED'
+        : 'FIX REJECTED';
+    const cls =
+      req.status === 'PENDING'
+        ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+        : req.status === 'APPROVED'
+        ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+        : 'bg-rose-500/15 text-rose-300 border-rose-500/40';
+    return (
+      <span
+        title={`Fix request ${req.status} — "${req.reason}"`}
+        className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border flex items-center gap-1 w-fit ${cls}`}
+      >
+        <FileQuestion className="w-3 h-3" />
+        {label}
+      </span>
+    );
+  };
+
+  // Map transactionId -> latest correction request for that sale
+  const requestsByTxn = new Map<string, CorrectionRequest>();
+  for (const r of correctionRequests) {
+    const existing = requestsByTxn.get(r.transactionId);
+    if (!existing || new Date(r.createdAt).getTime() > new Date(existing.createdAt).getTime()) {
+      requestsByTxn.set(r.transactionId, r);
+    }
+  }
+  const pendingFixCount = correctionRequests.filter(r => r.status === 'PENDING').length;
 
   // Responsive View Mode: 'AUTO' (Cards on mobile, Table on desktop), or explicit 'CARD' / 'TABLE'
   const [viewMode, setViewMode] = useState<'AUTO' | 'CARD' | 'TABLE'>('AUTO');
@@ -51,6 +123,8 @@ export function TransactionsView() {
   const [voidModalTxn, setVoidModalTxn] = useState<Transaction | null>(null);
   const [voidReason, setVoidReason] = useState<string>('');
   const [voiding, setVoiding] = useState<boolean>(false);
+  // COIN_GAME voids only: were the physical coins handed back into the drawer?
+  const [voidCoinsReturned, setVoidCoinsReturned] = useState<boolean | null>(null);
 
   const [correctModalTxn, setCorrectModalTxn] = useState<Transaction | null>(null);
   const [correctReason, setCorrectReason] = useState<string>('');
@@ -67,7 +141,14 @@ export function TransactionsView() {
 
   useEffect(() => {
     loadTransactions();
+    loadCorrectionRequests();
   }, [page, category, paymentMethod, status, startDate, endDate, sort]);
+
+  useEffect(() => {
+    if (!successToast) return;
+    const timer = setTimeout(() => setSuccessToast(null), 4500);
+    return () => clearTimeout(timer);
+  }, [successToast]);
 
   const loadTransactions = async () => {
     try {
@@ -91,6 +172,15 @@ export function TransactionsView() {
       setError(err.message || 'Failed to load transaction ledger');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadCorrectionRequests = async () => {
+    try {
+      const res = await api.correctionRequests.list();
+      setCorrectionRequests(res.requests);
+    } catch (err) {
+      console.error('Failed to load correction requests:', err);
     }
   };
 
@@ -125,7 +215,7 @@ export function TransactionsView() {
         a.click();
         a.remove();
       })
-      .catch(err => alert('Failed to export CSV: ' + err.message));
+      .catch(err => setError('Failed to export CSV: ' + err.message));
   };
 
   // Void submission
@@ -136,12 +226,29 @@ export function TransactionsView() {
       return;
     }
 
+    if (isCoinTxn(voidModalTxn) && voidCoinsReturned === null) {
+      setError('State whether the coins were physically returned to the drawer before voiding.');
+      return;
+    }
+
     try {
       setVoiding(true);
       setError(null);
-      await api.transactions.void(voidModalTxn.id, voidReason.trim());
+      await api.transactions.void(
+        voidModalTxn.id,
+        voidReason.trim(),
+        isCoinTxn(voidModalTxn) ? voidCoinsReturned === true : undefined
+      );
+      const returned = voidCoinsReturned === true;
+      const coins = coinCountOf(voidModalTxn);
+      showToast(
+        isCoinTxn(voidModalTxn)
+          ? `Sale voided — ${coins} coin(s) ${returned ? 'returned to the cashier' : 'kept deducted (lost)'} float.`
+          : 'Sale voided. It is removed from revenue totals but kept in the audit trail.'
+      );
       setVoidModalTxn(null);
       setVoidReason('');
+      setVoidCoinsReturned(null);
       loadTransactions();
     } catch (err: any) {
       setError(err.message || 'Failed to void transaction');
@@ -194,7 +301,8 @@ export function TransactionsView() {
       });
       setRequestModalTxn(null);
       setRequestReason('');
-      alert('Correction request submitted to manager/admin for review.');
+      showToast('Fix request sent to the manager/admin for review. The ledger now shows it as flagged.');
+      await loadCorrectionRequests();
     } catch (err: any) {
       setError(err.message || 'Failed to submit correction request');
     } finally {
@@ -224,6 +332,14 @@ export function TransactionsView() {
 
   return (
     <div className="space-y-5">
+      {/* Toast Notification */}
+      {successToast && (
+        <div className="fixed top-20 right-6 z-50 bg-emerald-600 text-white px-5 py-3 rounded-xl shadow-2xl shadow-emerald-950/60 flex items-center gap-3 border border-emerald-400/40 animate-in fade-in slide-in-from-top-4 no-print">
+          <BookmarkCheck className="w-5 h-5 shrink-0" />
+          <span className="text-sm font-medium">{successToast}</span>
+        </div>
+      )}
+
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 no-print">
         <div>
@@ -288,6 +404,17 @@ export function TransactionsView() {
             <Printer className="w-4 h-4" />
             <span className="hidden sm:inline">Print Ledger</span>
           </button>
+
+          {pendingFixCount > 0 && (
+            <button
+              type="button"
+              onClick={() => onNavigateToFixRequests && onNavigateToFixRequests()}
+              className="px-3.5 py-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 hover:bg-amber-500/20 text-xs font-semibold flex items-center gap-2 transition cursor-pointer min-h-[38px]"
+            >
+              <Clock3 className="w-4 h-4" />
+              {pendingFixCount} pending fix {pendingFixCount === 1 ? 'request' : 'requests'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -453,6 +580,7 @@ export function TransactionsView() {
                       >
                         {t.status}
                       </span>
+                      {renderFixFlag(t.id)}
                     </div>
                     <div className="text-[11px] text-slate-400 font-mono mt-0.5">
                       {formatLagosDateTime(t.timestamp)}
@@ -538,7 +666,7 @@ export function TransactionsView() {
                   {user?.role === 'ADMIN' && !isVoided && (
                     <button
                       type="button"
-                      onClick={() => { setVoidModalTxn(t); setVoidReason(''); }}
+                      onClick={() => { setVoidModalTxn(t); setVoidReason(''); setVoidCoinsReturned(null); }}
                       className="px-3 py-2 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 hover:bg-rose-500/20 text-xs font-semibold flex items-center gap-1.5 min-h-[40px] cursor-pointer"
                     >
                       <Ban className="w-3.5 h-3.5" />
@@ -639,13 +767,16 @@ export function TransactionsView() {
                     {t.cashierName}
                   </td>
                   <td className="py-3 px-4 font-sans whitespace-nowrap">
-                    {t.status === 'COMPLETED' ? (
-                      <span className="text-emerald-400 text-[11px] font-semibold">Active</span>
-                    ) : t.status === 'VOIDED' ? (
-                      <span className="text-rose-400 text-[11px] font-semibold">Voided</span>
-                    ) : (
-                      <span className="text-amber-400 text-[11px] font-semibold">Corrected</span>
-                    )}
+                    <div className="flex flex-col items-start gap-1">
+                      {t.status === 'COMPLETED' ? (
+                        <span className="text-emerald-400 text-[11px] font-semibold">Active</span>
+                      ) : t.status === 'VOIDED' ? (
+                        <span className="text-rose-400 text-[11px] font-semibold">Voided</span>
+                      ) : (
+                        <span className="text-amber-400 text-[11px] font-semibold">Corrected</span>
+                      )}
+                      {renderFixFlag(t.id)}
+                    </div>
                   </td>
                   <td className="py-3 px-4 text-right no-print whitespace-nowrap font-sans">
                     <div className="flex items-center justify-end gap-1.5">
@@ -663,7 +794,7 @@ export function TransactionsView() {
                       {user?.role === 'ADMIN' && t.status !== 'VOIDED' && (
                         <button
                           type="button"
-                          onClick={() => { setVoidModalTxn(t); setVoidReason(''); }}
+                          onClick={() => { setVoidModalTxn(t); setVoidReason(''); setVoidCoinsReturned(null); }}
                           title="Void transaction"
                           className="p-1.5 rounded-lg text-rose-400 hover:text-rose-300 hover:bg-rose-950/40 transition min-w-[34px] min-h-[34px] flex items-center justify-center cursor-pointer"
                         >
@@ -887,6 +1018,53 @@ export function TransactionsView() {
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white placeholder-slate-500 focus:border-rose-500 outline-none"
                 />
               </div>
+
+              {/* Coin sales: were the physical coins returned to the drawer? */}
+              {isCoinTxn(voidModalTxn) && (
+                <div className="p-3 rounded-xl bg-amber-950/25 border border-amber-800/50 space-y-2">
+                  <label className="block text-xs font-semibold text-amber-200">
+                    Were the {coinCountOf(voidModalTxn)} physical coin(s) returned to the drawer?{' '}
+                    <span className="text-red-400">*</span>
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setVoidCoinsReturned(true)}
+                      className={`p-2.5 rounded-xl border text-center transition cursor-pointer ${
+                        voidCoinsReturned === true
+                          ? 'bg-emerald-600/20 border-emerald-500 text-white font-bold'
+                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <RotateCcw className="w-4 h-4 mx-auto mb-1 text-emerald-400" />
+                      <span className="text-xs">Yes, returned</span>
+                      <span className="block text-[10px] text-slate-400 font-normal">
+                        Coins go back to the float
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setVoidCoinsReturned(false)}
+                      className={`p-2.5 rounded-xl border text-center transition cursor-pointer ${
+                        voidCoinsReturned === false
+                          ? 'bg-rose-600/20 border-rose-500 text-white font-bold'
+                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <Ban className="w-4 h-4 mx-auto mb-1 text-rose-400" />
+                      <span className="text-xs">No, already out</span>
+                      <span className="block text-[10px] text-slate-400 font-normal">
+                        Stays deducted (lost)
+                      </span>
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-amber-200/80">
+                    {voidCoinsReturned === false
+                      ? 'The coins were dispensed or are stuck in the machine, so they stay deducted from the cashier float.'
+                      : 'The sale is cancelled and the coins are credited back to the cashier float.'}
+                  </p>
+                </div>
+              )}
 
               <div className="flex justify-end gap-3 pt-2">
                 <button

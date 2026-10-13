@@ -51,8 +51,19 @@ for (const method of ['get', 'post', 'put', 'delete', 'patch'] as const) {
         const next = args[2];
         const fail = (err: any) => {
           console.error(`[API] ${method.toUpperCase()} ${path} failed:`, err?.stack || err);
+          // A blocked Firestore write must reach the user as an actionable
+          // message ("deploy the rules"), not a generic 500, otherwise the
+          // change looks saved while it was silently dropped. Respond here
+          // directly so the message is never lost to Express's default handler.
+          const isSaveFailure =
+            err && typeof err.message === 'string' && err.message.startsWith('Save failed');
+          if (res && !res.headersSent) {
+            res
+              .status(isSaveFailure ? 503 : 500)
+              .json({ error: isSaveFailure ? err.message : 'Internal server error' });
+            return;
+          }
           if (typeof next === 'function') next(err);
-          else if (res && !res.headersSent) res.status(500).json({ error: 'Internal server error' });
         };
         try {
           const result = h(...args);
@@ -944,7 +955,7 @@ api.get('/transactions/:id', authenticate, async (req: AuthRequest, res) => {
 
 // Admin-only Void transaction
 api.post('/transactions/:id/void', authenticate, requireAdmin, async (req: AuthRequest, res) => {
-  const { reason } = req.body;
+  const { reason, coinsReturned } = req.body;
   if (!reason || reason.trim().length < 4) {
     res.status(400).json({ error: 'A specific explanation/reason is required to void a financial transaction.' });
     return;
@@ -963,12 +974,23 @@ api.post('/transactions/:id/void', authenticate, requireAdmin, async (req: AuthR
     return;
   }
 
+  // COIN_GAME voids must state whether the physical coins came back to the
+  // drawer. Yes = credited back to the cashier's float; No = stays deducted.
+  const isCoinSale = countCoinsInTxn(txn) > 0;
+  if (isCoinSale && typeof coinsReturned !== 'boolean') {
+    res.status(400).json({
+      error: 'For coin sales you must state whether the coins were physically returned to the drawer.',
+    });
+    return;
+  }
+
   const previousStatus = txn.status;
   txn.status = 'VOIDED';
   txn.voidReason = reason.trim();
   txn.voidedBy = req.user!.id;
   txn.voidedByName = req.user!.name;
   txn.voidedAt = new Date().toISOString();
+  if (isCoinSale) txn.coinsReturnedToDrawer = coinsReturned === true;
 
   await saveDb(db);
 
@@ -979,7 +1001,10 @@ api.post('/transactions/:id/void', authenticate, requireAdmin, async (req: AuthR
     txn.id,
     {
       previousValues: { status: previousStatus, totalAmountKobo: txn.totalAmountKobo },
-      newValues: { status: 'VOIDED' },
+      newValues: {
+        status: 'VOIDED',
+        ...(isCoinSale ? { coinsReturnedToDrawer: coinsReturned === true } : {}),
+      },
       reason: reason.trim(),
     }
   );
@@ -1924,11 +1949,18 @@ api.get('/dashboard/stats', authenticate, async (req: AuthRequest, res) => {
   let totalAllocatedCoins = periodAllocations.reduce((s, a) => s + a.initialCoins, 0);
   let totalSoldCoins = 0;
   let totalVoidedCoins = 0;
+  let totalVoidedReturnedCoins = 0;
+  let totalVoidedLostCoins = 0;
   for (const t of periodAllTxns) {
     const coins = countCoinsInTxn(t);
     if (coins <= 0) continue;
-    if (t.status === 'VOIDED') totalVoidedCoins += coins;
-    else totalSoldCoins += coins;
+    if (t.status === 'VOIDED') {
+      totalVoidedCoins += coins;
+      if (t.coinsReturnedToDrawer === true) totalVoidedReturnedCoins += coins;
+      else totalVoidedLostCoins += coins;
+    } else {
+      totalSoldCoins += coins;
+    }
   }
   const totalCompensatedCoins = periodCompensations.reduce((s, c) => s + c.coinsIssued, 0);
 
@@ -1952,8 +1984,10 @@ api.get('/dashboard/stats', authenticate, async (req: AuthRequest, res) => {
       totalAllocated: totalAllocatedCoins,
       totalSold: totalSoldCoins,
       totalVoided: totalVoidedCoins,
+      totalVoidedReturned: totalVoidedReturnedCoins,
+      totalVoidedLost: totalVoidedLostCoins,
       totalCompensated: totalCompensatedCoins,
-      totalRemaining: totalAllocatedCoins - totalSoldCoins - totalVoidedCoins - totalCompensatedCoins,
+      totalRemaining: totalAllocatedCoins - totalSoldCoins - totalVoidedLostCoins - totalCompensatedCoins,
     },
     reconciliationStatus: todayRec
       ? {
@@ -2172,11 +2206,15 @@ api.post('/cashiers/:id/reset-password', authenticate, requireAdmin, async (req:
 // 7. COIN VAULT (ALLOCATIONS, BALANCES, COMPENSATIONS)
 // ==========================================================
 // Accounting model per cashier:
-//   expectedRemaining = allocated - soldCoins - voidedCoins - compensatedCoins
-// VOIDED sales (e.g. coin stuck in machine and admin refunded the customer)
-// STILL deduct from the float, because the physical coin already left the
-// cashier's drawer. The cashier reports the incident physically or on the
-// platform (void + fix request), and the books stay balanced.
+//   expectedRemaining = allocated - soldCoins - voidedLostCoins - compensatedCoins
+// A VOIDED sale splits in two, depending on whether the physical coins actually
+// came back into the drawer (admin answers this in the Void modal):
+//   • coinsReturnedToDrawer = true  → the sale was cancelled, the coins are
+//     physically back in the drawer, so they are CREDITED back to the float.
+//   • coinsReturnedToDrawer = false (or missing, i.e. legacy voids) → the coin
+//     already left the drawer (stuck in machine, dispensed then refunded), so
+//     it STAYS deducted. The cashier reports the incident physically or on the
+//     platform (void + fix request), and the books stay balanced.
 
 // Total coins physically handed out for one transaction (any status)
 function countCoinsInTxn(t: Transaction): number {
@@ -2205,12 +2243,19 @@ function computeCoinBalance(db: Db, cashierId: string, cashierName: string, star
   const cashierTxns = db.transactions.filter(t => t.cashierId === cashierId && inWindow(t.businessDate));
 
   let soldCoins = 0;
-  let voidedCoins = 0;
+  let voidedReturnedCoins = 0;
+  let voidedLostCoins = 0;
   for (const t of cashierTxns) {
     const coins = countCoinsInTxn(t);
     if (coins <= 0) continue;
-    if (t.status === 'VOIDED') voidedCoins += coins;
-    else soldCoins += coins;
+    if (t.status === 'VOIDED') {
+      // Coins physically handed back → credited to the float. Legacy voids have
+      // no flag and are treated as lost, preserving the previous behaviour.
+      if (t.coinsReturnedToDrawer === true) voidedReturnedCoins += coins;
+      else voidedLostCoins += coins;
+    } else {
+      soldCoins += coins;
+    }
   }
 
   const compensatedCoins = db.coinCompensations
@@ -2231,9 +2276,11 @@ function computeCoinBalance(db: Db, cashierId: string, cashierName: string, star
     businessDate,
     allocatedCoins,
     soldCoins,
-    voidedCoins,
+    voidedCoins: voidedReturnedCoins + voidedLostCoins,
+    voidedReturnedCoins,
+    voidedLostCoins,
     compensatedCoins,
-    expectedRemainingCoins: allocatedCoins - soldCoins - voidedCoins - compensatedCoins,
+    expectedRemainingCoins: allocatedCoins - soldCoins - voidedLostCoins - compensatedCoins,
     actualRemainingCoins: lastClosed?.actualRemainingCoins,
     discrepancyCoins: lastClosed?.discrepancyCoins,
     notes: lastClosed?.closeNotes,

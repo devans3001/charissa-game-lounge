@@ -179,10 +179,10 @@ export const api = {
     },
     get: (id: string) =>
       request<{ transaction: Transaction }>(`/api/transactions/${id}`),
-    void: (id: string, reason: string) =>
+    void: (id: string, reason: string, coinsReturned?: boolean) =>
       request<{ transaction: Transaction }>(`/api/transactions/${id}/void`, {
         method: 'POST',
-        body: JSON.stringify({ reason }),
+        body: JSON.stringify({ reason, coinsReturned }),
       }),
     correct: (
       id: string,

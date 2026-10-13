@@ -101,6 +101,9 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
   const [showAllTabsModal, setShowAllTabsModal] = useState<boolean>(false);
   const [tabFilterSearch, setTabFilterSearch] = useState<string>('');
 
+  // In-app confirmation for cancelling a saved tab (replaces window.confirm)
+  const [confirmDeleteTab, setConfirmDeleteTab] = useState<boolean>(false);
+
   // Bank transfer accounts (shown to customers for transfers)
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
 
@@ -175,8 +178,16 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
 
   // Coin float balance per cashier (allocated vs sold/voided/compensated)
   const [cashierCoinBalance, setCashierCoinBalance] = useState<CashierCoinBalance | null>(null);
+  // All balances returned by the server (cashier sees only their own; admin sees every cashier)
+  const [allCoinBalances, setAllCoinBalances] = useState<CashierCoinBalance[]>([]);
   // Coins physically left in this cashier's float right now (drives guards + low-stock alert)
   const coinsRemaining = cashierCoinBalance?.expectedRemainingCoins ?? 0;
+  // Admin view: the lowest float across every cashier — the one that needs a top-up first
+  const lowestCashierFloat =
+    allCoinBalances.length > 0
+      ? allCoinBalances.reduce((min, b) => (b.expectedRemainingCoins < min.expectedRemainingCoins ? b : min))
+      : null;
+  const lowCoinCount = coinsRemaining > 0 ? coinsRemaining : (lowestCashierFloat?.expectedRemainingCoins ?? 0);
 
   // Global coin price (so the quick coin modal can show a live total)
   const [coinPriceKobo, setCoinPriceKobo] = useState<number>(0);
@@ -193,7 +204,8 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
   const loadCashierCoinBalance = async () => {
     try {
       const res = await api.coins.balances();
-      // First (and only) balance for the current cashier
+      setAllCoinBalances(res.balances);
+      // Cashiers only ever get their own balance back; admins get every cashier
       const bal = res.balances.find((b: CashierCoinBalance) => b.cashierId === user?.id);
       setCashierCoinBalance(bal ?? null);
     } catch (err) {
@@ -363,14 +375,11 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
     }
   };
 
-  // Cancel / Delete open tab
+  // Cancel / Delete open tab — confirmed through the in-app modal
   const handleDeleteTab = async () => {
+    setConfirmDeleteTab(false);
     if (!selectedTabId) {
       handleStartNewTab();
-      return;
-    }
-
-    if (!window.confirm(`Are you sure you want to cancel and remove this saved tab for ${customerName}?`)) {
       return;
     }
 
@@ -592,7 +601,7 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
       {/* =========================================================================
           LOW COIN STOCK ALERT — sticky until the admin tops up the float
          ========================================================================= */}
-      {cashierCoinBalance !== null && coinsRemaining < 50 && (
+      {(coinsRemaining > 0 ? coinsRemaining < 50 : allCoinBalances.some(b => b.expectedRemainingCoins < 50)) && (
         <div
           className={`sticky top-2 z-40 rounded-2xl border p-3.5 flex items-center gap-3 shadow-lg backdrop-blur-sm ${
             coinsRemaining <= 0
@@ -604,14 +613,31 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
             className={`w-5 h-5 shrink-0 ${coinsRemaining <= 0 ? 'text-red-400' : 'text-amber-400'}`}
           />
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-bold">
-              {coinsRemaining <= 0
-                ? 'Out of coins — coin sales are blocked'
-                : `Low coin stock: ${coinsRemaining} coins left in your float`}
-            </p>
-            <p className="text-[11px] opacity-85">
-              Notify the admin to allocate / top up your coin float. This alert stays until the coins are topped up.
-            </p>
+            {coinsRemaining > 0 ? (
+              <>
+                <p className="text-sm font-bold">
+                  {coinsRemaining < 50
+                    ? `Low coin stock: ${coinsRemaining} coins left in your float`
+                    : 'Coin stock healthy'}
+                </p>
+                <p className="text-[11px] opacity-85">
+                  Notify the admin to allocate / top up your coin float. This alert stays until the coins are topped up.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-sm font-bold">
+                  {lowestCashierFloat && lowestCashierFloat.expectedRemainingCoins <= 0
+                    ? 'A cashier is out of coins — coin sales are blocked for them'
+                    : `Low coin stock: ${lowestCashierFloat?.cashierName ?? 'a cashier'} has only ${
+                        lowestCashierFloat?.expectedRemainingCoins ?? 0
+                      } coins left`}
+                </p>
+                <p className="text-[11px] opacity-85">
+                  Allocate more coins in the Coin Vault. This alert stays until the float is topped up.
+                </p>
+              </>
+            )}
           </div>
           <button
             type="button"
@@ -1713,6 +1739,54 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
       )}
 
       {/* =========================================================================
+          CONFIRM DISCARD TAB MODAL (replaces the old window.confirm)
+         ========================================================================= */}
+      {confirmDeleteTab && (
+        <div
+          onClick={() => setConfirmDeleteTab(false)}
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="bg-slate-900 border border-rose-800/60 rounded-2xl max-w-sm w-full p-6 shadow-2xl text-slate-100 space-y-4"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-400 flex items-center justify-center shrink-0">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-white text-base">Discard this tab?</h3>
+                <p className="text-xs text-slate-400">This cannot be undone.</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300">
+              You are about to cancel and remove the saved tab for{' '}
+              <span className="font-semibold text-white">{customerName || 'this customer'}</span>. No payment was
+              recorded and the entry will be gone from your active tabs.
+            </p>
+
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteTab(false)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-800 text-slate-300 hover:text-white text-sm font-semibold transition cursor-pointer"
+              >
+                Keep Tab
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteTab}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-sm transition cursor-pointer"
+              >
+                Discard Tab
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
           ALL TABS MANAGEMENT MODAL / DRAWER (Easily manage 20+ active customers)
          ========================================================================= */}
       {showAllTabsModal && (
@@ -1845,7 +1919,7 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
             {/* Thermal / Standard Receipt Card */}
             <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 font-mono text-xs space-y-3 print-card">
               <div className="text-center border-b border-slate-800 pb-2">
-                <div className="font-bold text-sm text-white">GAME LOUNGE ABUJA/LAGOS</div>
+                <div className="font-bold text-sm text-white">CHARISSA GAME LOUNGE</div>
                 <div className="text-[11px] text-slate-400">Official Customer Sales Slip</div>
               </div>
 

@@ -337,8 +337,14 @@ export function CoinVaultView() {
                         </div>
                         <div className="flex justify-between">
                           <span className="text-slate-400">Lost in voided sales</span>
-                          <span className="font-mono text-orange-400">−{b.voidedCoins}</span>
+                          <span className="font-mono text-orange-400">−{b.voidedLostCoins ?? 0}</span>
                         </div>
+                        {(b.voidedReturnedCoins ?? 0) > 0 && (
+                          <div className="flex justify-between">
+                            <span className="text-slate-400">Returned via void</span>
+                            <span className="font-mono text-emerald-400">+{b.voidedReturnedCoins}</span>
+                          </div>
+                        )}
                         <div className="flex justify-between">
                           <span className="text-slate-400">Lost coins</span>
                           <span className="font-mono text-amber-400">−{b.compensatedCoins}</span>

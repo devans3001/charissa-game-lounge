@@ -304,7 +304,7 @@ export function DashboardView({
               </span>
             )}
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-4">
             <div className="text-center">
               <span className="text-[10px] uppercase tracking-wider text-slate-400 block mb-1">Allocated</span>
               <span className="text-xl font-bold font-mono text-white">{stats.coinStats.totalAllocated}</span>
@@ -315,7 +315,15 @@ export function DashboardView({
             </div>
             <div className="text-center">
               <span className="text-[10px] uppercase tracking-wider text-slate-400 block mb-1">Lost (voided)</span>
-              <span className="text-xl font-bold font-mono text-orange-400">{stats.coinStats.totalVoided}</span>
+              <span className="text-xl font-bold font-mono text-orange-400">
+                {stats.coinStats.totalVoidedLost ?? stats.coinStats.totalVoided}
+              </span>
+            </div>
+            <div className="text-center">
+              <span className="text-[10px] uppercase tracking-wider text-slate-400 block mb-1">Returned (voided)</span>
+              <span className="text-xl font-bold font-mono text-emerald-400">
+                {stats.coinStats.totalVoidedReturned ?? 0}
+              </span>
             </div>
             <div className="text-center">
               <span className="text-[10px] uppercase tracking-wider text-slate-400 block mb-1">Lost coins</span>
