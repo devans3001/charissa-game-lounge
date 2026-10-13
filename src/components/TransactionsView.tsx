@@ -18,7 +18,10 @@ import {
   Receipt,
   Eye,
   X,
-  FileQuestion
+  FileQuestion,
+  LayoutGrid,
+  List,
+  SlidersHorizontal
 } from 'lucide-react';
 
 export function TransactionsView() {
@@ -29,6 +32,10 @@ export function TransactionsView() {
   const [totalPages, setTotalPages] = useState<number>(1);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Responsive View Mode: 'AUTO' (Cards on mobile, Table on desktop), or explicit 'CARD' / 'TABLE'
+  const [viewMode, setViewMode] = useState<'AUTO' | 'CARD' | 'TABLE'>('AUTO');
+  const [showFiltersMobile, setShowFiltersMobile] = useState<boolean>(false);
 
   // Filters
   const [search, setSearch] = useState<string>('');
@@ -195,8 +202,28 @@ export function TransactionsView() {
     }
   };
 
+  const activeFiltersCount = [
+    category,
+    paymentMethod,
+    status,
+    startDate,
+    endDate,
+    sort !== 'newest' ? sort : ''
+  ].filter(Boolean).length;
+
+  const handleResetFilters = () => {
+    setSearch('');
+    setCategory('');
+    setPaymentMethod('');
+    setStatus('');
+    setStartDate('');
+    setEndDate('');
+    setSort('newest');
+    setPage(1);
+  };
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 no-print">
         <div>
@@ -211,25 +238,55 @@ export function TransactionsView() {
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          {/* Card / Table View Toggle for responsive flexibility */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-0.5 flex items-center">
+            <button
+              type="button"
+              onClick={() => setViewMode(viewMode === 'CARD' ? 'AUTO' : 'CARD')}
+              title="Card view (optimized for mobile & touch)"
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer min-h-[36px] ${
+                viewMode === 'CARD'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Cards</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode(viewMode === 'TABLE' ? 'AUTO' : 'TABLE')}
+              title="Table view (dense multi-column grid)"
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer min-h-[36px] ${
+                viewMode === 'TABLE'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <List className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Table</span>
+            </button>
+          </div>
+
           {user?.role === 'ADMIN' && (
             <button
               type="button"
               onClick={handleExportCsv}
-              className="px-3.5 py-2 rounded-xl bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-200 text-xs font-semibold flex items-center gap-2 transition cursor-pointer"
+              className="px-3.5 py-2 rounded-xl bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-200 text-xs font-semibold flex items-center gap-2 transition cursor-pointer min-h-[38px]"
             >
               <Download className="w-4 h-4" />
-              Export CSV
+              <span className="hidden sm:inline">Export CSV</span>
             </button>
           )}
 
           <button
             type="button"
             onClick={() => window.print()}
-            className="px-3.5 py-2 rounded-xl bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-200 text-xs font-semibold flex items-center gap-2 transition cursor-pointer"
+            className="px-3.5 py-2 rounded-xl bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-200 text-xs font-semibold flex items-center gap-2 transition cursor-pointer min-h-[38px]"
           >
             <Printer className="w-4 h-4" />
-            Print Ledger
+            <span className="hidden sm:inline">Print Ledger</span>
           </button>
         </div>
       </div>
@@ -242,32 +299,47 @@ export function TransactionsView() {
       )}
 
       {/* Filter and Search Bar */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4 no-print">
-        <form onSubmit={handleSearchSubmit} className="flex flex-col sm:flex-row gap-3">
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3.5 no-print">
+        <form onSubmit={handleSearchSubmit} className="flex flex-col sm:flex-row gap-2.5">
           <div className="relative flex-1">
             <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
             <input
               type="text"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Search receipt number, slip reference, game, or cashier name..."
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:border-indigo-500 outline-none"
+              placeholder="Search receipt, slip ref, customer, game, cashier..."
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-sm sm:text-xs text-white placeholder-slate-500 focus:border-indigo-500 outline-none min-h-[42px]"
             />
           </div>
-          <button
-            type="submit"
-            className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl transition cursor-pointer shrink-0"
-          >
-            Search
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="submit"
+              className="flex-1 sm:flex-none px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl transition cursor-pointer min-h-[42px]"
+            >
+              Search
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowFiltersMobile(!showFiltersMobile)}
+              className={`sm:hidden px-3.5 py-2.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition min-h-[42px] ${
+                activeFiltersCount > 0
+                  ? 'bg-indigo-600/20 border-indigo-500 text-indigo-300'
+                  : 'bg-slate-950 border-slate-800 text-slate-300'
+              }`}
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              <span>Filters {activeFiltersCount > 0 && `(${activeFiltersCount})`}</span>
+            </button>
+          </div>
         </form>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5 pt-2 border-t border-slate-800/80 text-xs">
+        {/* Filter Dropdowns: Visible on sm+ or toggled open on mobile */}
+        <div className={`${showFiltersMobile ? 'grid' : 'hidden sm:grid'} grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 pt-2 border-t border-slate-800/80 text-xs`}>
           {/* Category */}
           <select
             value={category}
             onChange={e => { setCategory(e.target.value); setPage(1); }}
-            className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-slate-300 outline-none"
+            className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-slate-300 outline-none min-h-[40px] text-xs"
           >
             <option value="">All Categories</option>
             <option value="PS_GAME">PlayStation</option>
@@ -279,7 +351,7 @@ export function TransactionsView() {
           <select
             value={paymentMethod}
             onChange={e => { setPaymentMethod(e.target.value); setPage(1); }}
-            className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-slate-300 outline-none"
+            className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-slate-300 outline-none min-h-[40px] text-xs"
           >
             <option value="">All Methods</option>
             <option value="CASH">Cash</option>
@@ -291,10 +363,10 @@ export function TransactionsView() {
           <select
             value={status}
             onChange={e => { setStatus(e.target.value); setPage(1); }}
-            className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-slate-300 outline-none"
+            className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-slate-300 outline-none min-h-[40px] text-xs"
           >
             <option value="">All Statuses</option>
-            <option value="COMPLETED">Completed</option>
+            <option value="COMPLETED">Active (Completed)</option>
             <option value="VOIDED">Voided</option>
             <option value="CORRECTED">Corrected</option>
           </select>
@@ -303,7 +375,7 @@ export function TransactionsView() {
           <select
             value={sort}
             onChange={e => { setSort(e.target.value); setPage(1); }}
-            className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-slate-300 outline-none"
+            className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-slate-300 outline-none min-h-[40px] text-xs"
           >
             <option value="newest">Newest First</option>
             <option value="oldest">Oldest First</option>
@@ -316,7 +388,7 @@ export function TransactionsView() {
             type="date"
             value={startDate}
             onChange={e => { setStartDate(e.target.value); setPage(1); }}
-            className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-slate-300 outline-none font-mono"
+            className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-slate-300 outline-none font-mono min-h-[40px] text-xs"
             placeholder="From Date"
           />
 
@@ -325,26 +397,195 @@ export function TransactionsView() {
             type="date"
             value={endDate}
             onChange={e => { setEndDate(e.target.value); setPage(1); }}
-            className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-slate-300 outline-none font-mono"
+            className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-slate-300 outline-none font-mono min-h-[40px] text-xs"
             placeholder="To Date"
           />
         </div>
+
+        {activeFiltersCount > 0 && (
+          <div className="flex items-center justify-between pt-2 border-t border-slate-800/60 text-xs">
+            <span className="text-slate-400">
+              Active filters: <strong className="text-indigo-400">{activeFiltersCount} applied</strong>
+            </span>
+            <button
+              type="button"
+              onClick={handleResetFilters}
+              className="text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-semibold cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              Reset all filters
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Ledger Table */}
+      {/* Main Ledger Content: Dual Presentation (Cards on mobile or explicit CARD mode, Table on md+ or explicit TABLE mode) */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden print-card">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+        {/* =========================================================================
+            RESPONSIVE CARDS VIEW (Clean & touch-ergonomic on mobile / smaller viewports)
+           ========================================================================= */}
+        <div className={`${viewMode === 'TABLE' ? 'hidden' : viewMode === 'CARD' ? 'block' : 'block md:hidden'} divide-y divide-slate-800/80 p-3 sm:p-4 space-y-3`}>
+          {transactions.map(t => {
+            const isVoided = t.status === 'VOIDED';
+            const isCorrected = t.status === 'CORRECTED';
+            return (
+              <div
+                key={t.id}
+                className={`bg-slate-950 border border-slate-800/90 rounded-2xl p-4 transition space-y-3 ${
+                  isVoided ? 'opacity-60 border-rose-950 bg-rose-950/10' : ''
+                }`}
+              >
+                {/* Card Header: Receipt, Timestamp & Status */}
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-bold text-white text-sm tracking-tight">
+                        {t.receiptNumber}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
+                          t.status === 'COMPLETED'
+                            ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                            : isVoided
+                            ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30 line-through'
+                            : 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                        }`}
+                      >
+                        {t.status}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-400 font-mono mt-0.5">
+                      {formatLagosDateTime(t.timestamp)}
+                    </div>
+                  </div>
+
+                  {/* Amount Pill */}
+                  <div className="text-right">
+                    <span className={`text-base font-extrabold font-mono ${isVoided ? 'line-through text-slate-500' : 'text-emerald-400'}`}>
+                      {formatNaira(t.totalAmountKobo)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Card Body: Game & Customer details */}
+                <div className="space-y-1.5 pt-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="font-semibold text-white flex items-center gap-1.5">
+                      <span>{t.gameName}</span>
+                      {t.items && t.items.length > 1 && (
+                        <span className="px-1.5 py-0.2 rounded text-[10px] bg-indigo-500/20 text-indigo-300 font-mono">
+                          {t.items.length} games
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[11px] text-slate-400 font-mono uppercase">
+                      {t.gameCategory.replace('_', ' ')}
+                    </span>
+                  </div>
+
+                  {t.customerName && (
+                    <div className="text-xs text-amber-300 font-medium flex items-center gap-1">
+                      <span>👤 Customer: {t.customerName}</span>
+                    </div>
+                  )}
+
+                  {/* Payment Details */}
+                  <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-800/60 text-slate-300">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold text-slate-200">
+                        {t.paymentMethod === 'BANK_TRANSFER' ? 'Transfer' : t.paymentMethod}
+                      </span>
+                      {t.senderName && (
+                        <span className="text-[11px] text-violet-300">· {t.senderName}</span>
+                      )}
+                      {t.paymentReference && (
+                        <span className="text-[11px] text-indigo-400 font-mono">· {t.paymentReference}</span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-slate-400">
+                      Cashier: <strong className="text-slate-300">{t.cashierName}</strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card Actions: Big touch-friendly buttons */}
+                <div className="pt-2 border-t border-slate-800/80 flex items-center justify-end gap-2 no-print flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedTxn(t)}
+                    className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 min-h-[40px] cursor-pointer"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>View / Receipt</span>
+                  </button>
+
+                  {user?.role === 'ADMIN' && !isVoided && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCorrectModalTxn(t);
+                        setCorrectMethod(t.paymentMethod);
+                        setCorrectRef(t.paymentReference || '');
+                        setCorrectReason('');
+                      }}
+                      className="px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 hover:bg-amber-500/20 text-xs font-semibold flex items-center gap-1.5 min-h-[40px] cursor-pointer"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                      <span>Correct</span>
+                    </button>
+                  )}
+
+                  {user?.role === 'ADMIN' && !isVoided && (
+                    <button
+                      type="button"
+                      onClick={() => { setVoidModalTxn(t); setVoidReason(''); }}
+                      className="px-3 py-2 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 hover:bg-rose-500/20 text-xs font-semibold flex items-center gap-1.5 min-h-[40px] cursor-pointer"
+                    >
+                      <Ban className="w-3.5 h-3.5" />
+                      <span>Void</span>
+                    </button>
+                  )}
+
+                  {user?.role === 'CASHIER' && !isVoided && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRequestModalTxn(t);
+                        setRequestReason('');
+                      }}
+                      className="px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 hover:bg-amber-500/20 text-xs font-semibold flex items-center gap-1.5 min-h-[40px] cursor-pointer"
+                    >
+                      <FileQuestion className="w-3.5 h-3.5" />
+                      <span>Flag Fix</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+
+          {transactions.length === 0 && (
+            <div className="py-12 text-center text-slate-400 text-xs">
+              No transactions found matching your criteria.
+            </div>
+          )}
+        </div>
+
+        {/* =========================================================================
+            DESKTOP & TABLET DATA GRID (Visible on md+ or when TABLE mode is active)
+           ========================================================================= */}
+        <div className={`${viewMode === 'CARD' ? 'hidden' : viewMode === 'TABLE' ? 'block' : 'hidden md:block'} overflow-x-auto`}>
+          <table className="w-full text-left text-xs min-w-[760px]">
             <thead>
               <tr className="bg-slate-950/70 border-b border-slate-800 text-slate-400">
-                <th className="py-3 px-4 font-semibold">Receipt No.</th>
-                <th className="py-3 px-4 font-semibold">Date & Time</th>
+                <th className="py-3 px-4 font-semibold whitespace-nowrap">Receipt No.</th>
+                <th className="py-3 px-4 font-semibold whitespace-nowrap">Date & Time</th>
                 <th className="py-3 px-4 font-semibold">Game</th>
                 <th className="py-3 px-4 font-semibold">Method & Slip</th>
-                <th className="py-3 px-4 font-semibold text-right">Amount (₦)</th>
-                <th className="py-3 px-4 font-semibold">Cashier</th>
-                <th className="py-3 px-4 font-semibold">Status</th>
-                <th className="py-3 px-4 font-semibold text-right no-print">Actions</th>
+                <th className="py-3 px-4 font-semibold text-right whitespace-nowrap">Amount (₦)</th>
+                <th className="py-3 px-4 font-semibold whitespace-nowrap">Cashier</th>
+                <th className="py-3 px-4 font-semibold whitespace-nowrap">Status</th>
+                <th className="py-3 px-4 font-semibold text-right no-print whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/80 font-mono">
@@ -413,7 +654,7 @@ export function TransactionsView() {
                         type="button"
                         onClick={() => setSelectedTxn(t)}
                         title="View details"
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition min-w-[34px] min-h-[34px] flex items-center justify-center cursor-pointer"
                       >
                         <Eye className="w-4 h-4" />
                       </button>
@@ -424,7 +665,7 @@ export function TransactionsView() {
                           type="button"
                           onClick={() => { setVoidModalTxn(t); setVoidReason(''); }}
                           title="Void transaction"
-                          className="p-1.5 rounded-lg text-rose-400 hover:text-rose-300 hover:bg-rose-950/40 transition"
+                          className="p-1.5 rounded-lg text-rose-400 hover:text-rose-300 hover:bg-rose-950/40 transition min-w-[34px] min-h-[34px] flex items-center justify-center cursor-pointer"
                         >
                           <Ban className="w-4 h-4" />
                         </button>
@@ -441,7 +682,7 @@ export function TransactionsView() {
                             setCorrectReason('');
                           }}
                           title="Correct payment method/slip"
-                          className="p-1.5 rounded-lg text-amber-400 hover:text-amber-300 hover:bg-amber-950/40 transition"
+                          className="p-1.5 rounded-lg text-amber-400 hover:text-amber-300 hover:bg-amber-950/40 transition min-w-[34px] min-h-[34px] flex items-center justify-center cursor-pointer"
                         >
                           <Pencil className="w-4 h-4" />
                         </button>
@@ -456,7 +697,7 @@ export function TransactionsView() {
                             setRequestReason('');
                           }}
                           title="Flag mistake for admin review"
-                          className="p-1.5 rounded-lg text-amber-400 hover:text-amber-300 hover:bg-amber-950/40 transition flex items-center gap-1 text-[11px]"
+                          className="p-1.5 rounded-lg text-amber-400 hover:text-amber-300 hover:bg-amber-950/40 transition flex items-center gap-1 text-[11px] min-h-[34px] cursor-pointer"
                         >
                           <FileQuestion className="w-3.5 h-3.5" />
                           Fix
@@ -479,25 +720,30 @@ export function TransactionsView() {
         </div>
 
         {/* Pagination Bar */}
-        <div className="p-4 bg-slate-950/80 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400 no-print">
+        <div className="p-3.5 sm:p-4 bg-slate-950/80 border-t border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs text-slate-400 no-print">
           <div>
-            Showing {transactions.length} of {total} records (Page {page} of {totalPages})
+            Showing <strong className="text-white">{transactions.length}</strong> of <strong className="text-white">{total}</strong> records (Page {page} of {totalPages})
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 self-end sm:self-auto">
             <button
               type="button"
               disabled={page <= 1}
               onClick={() => setPage(page - 1)}
-              className="p-2 rounded-lg border border-slate-800 hover:bg-slate-800 disabled:opacity-40 transition"
+              className="px-3 py-1.5 rounded-lg border border-slate-800 hover:bg-slate-800 disabled:opacity-40 transition flex items-center gap-1 min-h-[36px]"
             >
               <ChevronLeft className="w-4 h-4" />
+              <span>Prev</span>
             </button>
+            <span className="font-mono px-2 text-white font-semibold">
+              {page} / {totalPages}
+            </span>
             <button
               type="button"
               disabled={page >= totalPages}
               onClick={() => setPage(page + 1)}
-              className="p-2 rounded-lg border border-slate-800 hover:bg-slate-800 disabled:opacity-40 transition"
+              className="px-3 py-1.5 rounded-lg border border-slate-800 hover:bg-slate-800 disabled:opacity-40 transition flex items-center gap-1 min-h-[36px]"
             >
+              <span>Next</span>
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>

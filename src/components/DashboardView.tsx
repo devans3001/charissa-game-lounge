@@ -463,32 +463,69 @@ export function DashboardView({
             )}
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
+          {/* Mobile Cards for Live Stream */}
+          <div className="sm:hidden space-y-2.5">
+            {stats?.recentTransactions.map(t => (
+              <div key={t.id} className="p-3 bg-slate-950 border border-slate-800 rounded-xl space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono font-bold text-white text-xs">{t.receiptNumber}</span>
+                  <span className="font-mono font-bold text-emerald-400 text-xs">
+                    {formatNaira(t.totalAmountKobo)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="font-semibold text-slate-200">{t.gameName}</span>
+                  <span className="text-slate-400 font-mono">{t.paymentMethod}</span>
+                </div>
+                <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-slate-800/60">
+                  <span>Cashier: {t.cashierName}</span>
+                  {t.paymentReference && <span className="font-mono text-indigo-400">Ref: {t.paymentReference}</span>}
+                </div>
+              </div>
+            ))}
+
+            {(!stats?.recentTransactions || stats.recentTransactions.length === 0) && (
+              <div className="py-8 text-center text-xs text-slate-400">
+                No recent sales recorded.
+              </div>
+            )}
+          </div>
+
+          {/* Desktop Table */}
+          <div className="hidden sm:block overflow-x-auto">
+            <table className="w-full text-left text-xs min-w-[500px]">
               <thead>
                 <tr className="border-b border-slate-800 text-slate-400">
-                  <th className="pb-2 font-semibold">Receipt</th>
+                  <th className="pb-2 font-semibold whitespace-nowrap">Receipt</th>
                   <th className="pb-2 font-semibold">Game</th>
                   <th className="pb-2 font-semibold">Method</th>
                   <th className="pb-2 font-semibold">Cashier</th>
-                  <th className="pb-2 font-semibold text-right">Amount</th>
+                  <th className="pb-2 font-semibold text-right whitespace-nowrap">Amount</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 font-mono">
                 {stats?.recentTransactions.map(t => (
                   <tr key={t.id} className="hover:bg-slate-800/40">
-                    <td className="py-2.5 text-slate-300 font-semibold">{t.receiptNumber}</td>
+                    <td className="py-2.5 text-slate-300 font-semibold whitespace-nowrap">{t.receiptNumber}</td>
                     <td className="py-2.5 text-white font-sans">{t.gameName}</td>
                     <td className="py-2.5 text-slate-300">
                       {t.paymentMethod}
                       {t.paymentReference && <span className="text-[10px] text-slate-400 block font-mono">{t.paymentReference}</span>}
                     </td>
-                    <td className="py-2.5 text-slate-400 font-sans">{t.cashierName}</td>
-                    <td className="py-2.5 text-right font-bold text-emerald-400">
+                    <td className="py-2.5 text-slate-400 font-sans whitespace-nowrap">{t.cashierName}</td>
+                    <td className="py-2.5 text-right font-bold text-emerald-400 whitespace-nowrap">
                       {formatNaira(t.totalAmountKobo)}
                     </td>
                   </tr>
                 ))}
+
+                {(!stats?.recentTransactions || stats.recentTransactions.length === 0) && (
+                  <tr>
+                    <td colSpan={5} className="py-8 text-center text-xs text-slate-400 font-sans">
+                      No recent sales recorded.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>

@@ -360,13 +360,54 @@ export function CoinVaultView() {
 
           {/* ADMIN: Allocation history */}
           {isAdmin && allocations.length > 0 && (
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-300 mb-4 flex items-center gap-2">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5">
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-300 mb-3 sm:mb-4 flex items-center gap-2">
                 <History className="w-4 h-4 text-slate-400" />
                 Allocation History
               </h3>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
+
+              {/* Mobile Cards View */}
+              <div className="sm:hidden space-y-2.5">
+                {allocations.slice(0, 20).map(a => (
+                  <div key={a.id} className="bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-2 text-xs">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <span className="font-bold text-white block">{a.cashierName}</span>
+                        <span className="text-[11px] text-slate-400 font-mono">{a.businessDate}</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="font-mono text-amber-300 font-bold text-sm block">
+                          {a.initialCoins} coins
+                        </span>
+                        <span
+                          className={`text-[9px] font-semibold uppercase px-1.5 py-0.2 rounded ${
+                            a.status === 'ACTIVE'
+                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                              : 'bg-slate-800 text-slate-400'
+                          }`}
+                        >
+                          {a.status}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px] pt-1.5 border-t border-slate-800/60 text-slate-400">
+                      <span>By: {a.allocatedByName}</span>
+                      {a.actualRemainingCoins !== undefined && (
+                        <span className={`font-mono font-semibold ${
+                          (a.discrepancyCoins || 0) < 0 ? 'text-red-400' : (a.discrepancyCoins || 0) > 0 ? 'text-amber-400' : 'text-emerald-400'
+                        }`}>
+                          Counted: {a.actualRemainingCoins} ({(a.discrepancyCoins || 0) > 0 ? '+' : ''}{a.discrepancyCoins})
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Desktop Table View */}
+              <div className="hidden sm:block overflow-x-auto">
+                <table className="w-full text-left text-xs min-w-[580px]">
                   <thead>
                     <tr className="border-b border-slate-800 text-slate-400">
                       <th className="pb-2 font-semibold">Date</th>
@@ -412,16 +453,42 @@ export function CoinVaultView() {
 
           {/* Compensations log */}
           {compensations.length > 0 && (
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-300 mb-4 flex items-center gap-2">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5">
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-300 mb-3 sm:mb-4 flex items-center gap-2">
                 <Zap className="w-4 h-4 text-amber-400" />
                 Power-Outage / Lost Coin Compensation Log
               </h3>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
+
+              {/* Mobile Cards View */}
+              <div className="sm:hidden space-y-2.5">
+                {compensations.slice(0, 20).map(c => (
+                  <div key={c.id} className="bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-2 text-xs">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <span className="font-bold text-white block">{c.customerName}</span>
+                        <span className="text-[11px] text-slate-300">{c.gameName}</span>
+                      </div>
+                      <span className="font-mono text-amber-300 font-bold text-sm">
+                        {c.coinsIssued} coins
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-300 bg-slate-900 p-2 rounded-lg font-sans">
+                      "{c.reason}"
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono pt-1 border-t border-slate-800/60">
+                      <span>Cashier: {c.cashierName}</span>
+                      <span>{formatLagosDateTime(c.timestamp)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Desktop Table View */}
+              <div className="hidden sm:block overflow-x-auto">
+                <table className="w-full text-left text-xs min-w-[580px]">
                   <thead>
                     <tr className="border-b border-slate-800 text-slate-400">
-                      <th className="pb-2 font-semibold">When</th>
+                      <th className="pb-2 font-semibold whitespace-nowrap">When</th>
                       <th className="pb-2 font-semibold">Cashier</th>
                       <th className="pb-2 font-semibold">Customer</th>
                       <th className="pb-2 font-semibold">Game</th>
@@ -433,7 +500,7 @@ export function CoinVaultView() {
                     {compensations.slice(0, 20).map(c => (
                       <tr key={c.id} className="hover:bg-slate-800/40">
                         <td className="py-2.5 text-slate-400 font-mono whitespace-nowrap">{formatLagosDateTime(c.timestamp)}</td>
-                        <td className="py-2.5 text-white font-semibold">{c.cashierName}</td>
+                        <td className="py-2.5 text-white font-semibold whitespace-nowrap">{c.cashierName}</td>
                         <td className="py-2.5 text-slate-200">{c.customerName}</td>
                         <td className="py-2.5 text-slate-300">{c.gameName}</td>
                         <td className="py-2.5 text-right font-mono text-amber-300 font-bold">{c.coinsIssued}</td>

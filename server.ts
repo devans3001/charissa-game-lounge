@@ -3,8 +3,12 @@ import http from 'http';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import apiRouter from './server/api.ts';
+import { initFirestoreDb } from './server/db.ts';
 
 async function startServer() {
+  // Initialize Firestore database connection and initial migration/loading
+  await initFirestoreDb();
+
   const app = express();
   const PORT = parseInt(process.env.PORT || '3000', 10);
   const httpServer = http.createServer(app);

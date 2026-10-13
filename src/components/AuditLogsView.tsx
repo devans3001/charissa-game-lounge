@@ -13,7 +13,9 @@ import {
   User,
   Clock,
   Eye,
-  X
+  X,
+  LayoutGrid,
+  List
 } from 'lucide-react';
 
 export function AuditLogsView() {
@@ -23,6 +25,8 @@ export function AuditLogsView() {
   const [totalPages, setTotalPages] = useState<number>(1);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [viewMode, setViewMode] = useState<'AUTO' | 'CARD' | 'TABLE'>('AUTO');
 
   // Filters
   const [search, setSearch] = useState<string>('');
@@ -67,7 +71,7 @@ export function AuditLogsView() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
@@ -79,6 +83,30 @@ export function AuditLogsView() {
             Immutable log answering: Who did what, when, previous vs new values, and authorization reasons
           </p>
         </div>
+
+        {/* View Toggle */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-0.5 flex items-center self-start sm:self-auto">
+          <button
+            type="button"
+            onClick={() => setViewMode(viewMode === 'CARD' ? 'AUTO' : 'CARD')}
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer min-h-[36px] ${
+              viewMode === 'CARD' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <LayoutGrid className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Cards</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode(viewMode === 'TABLE' ? 'AUTO' : 'TABLE')}
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer min-h-[36px] ${
+              viewMode === 'TABLE' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <List className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Table</span>
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -89,8 +117,8 @@ export function AuditLogsView() {
       )}
 
       {/* Filter and Search Bar */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-4">
-        <form onSubmit={handleSearchSubmit} className="flex flex-col sm:flex-row gap-3">
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3.5">
+        <form onSubmit={handleSearchSubmit} className="flex flex-col sm:flex-row gap-2.5">
           <div className="relative flex-1">
             <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
             <input
@@ -98,22 +126,22 @@ export function AuditLogsView() {
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search action name, staff member, entity ID, or reason..."
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:border-indigo-500 outline-none"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-sm sm:text-xs text-white placeholder-slate-500 focus:border-indigo-500 outline-none min-h-[42px]"
             />
           </div>
           <button
             type="submit"
-            className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl transition cursor-pointer shrink-0"
+            className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl transition cursor-pointer shrink-0 min-h-[42px]"
           >
             Search Logs
           </button>
         </form>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-2 border-t border-slate-800/80 text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-slate-800/80 text-xs">
           <select
             value={entityType}
             onChange={e => { setEntityType(e.target.value); setPage(1); }}
-            className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-slate-300 outline-none"
+            className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-slate-300 outline-none min-h-[40px] text-xs"
           >
             <option value="">All Entities</option>
             <option value="TRANSACTION">Transactions</option>
@@ -128,7 +156,7 @@ export function AuditLogsView() {
             type="date"
             value={startDate}
             onChange={e => { setStartDate(e.target.value); setPage(1); }}
-            className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-slate-300 outline-none font-mono"
+            className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-slate-300 outline-none font-mono min-h-[40px] text-xs"
             placeholder="From Date"
           />
 
@@ -136,7 +164,7 @@ export function AuditLogsView() {
             type="date"
             value={endDate}
             onChange={e => { setEndDate(e.target.value); setPage(1); }}
-            className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-slate-300 outline-none font-mono"
+            className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-slate-300 outline-none font-mono min-h-[40px] text-xs"
             placeholder="To Date"
           />
 
@@ -150,25 +178,80 @@ export function AuditLogsView() {
               setEndDate('');
               setPage(1);
             }}
-            className="px-3 py-2 bg-slate-950 border border-slate-800 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition"
+            className="px-3 py-2 bg-slate-950 border border-slate-800 hover:bg-slate-800 text-slate-400 hover:text-white rounded-xl transition min-h-[40px] text-xs"
           >
             Reset Filters
           </button>
         </div>
       </div>
 
-      {/* Logs Table */}
+      {/* Main Logs Container: Dual Presentation */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+        {/* RESPONSIVE CARDS VIEW (Mobile < md: or explicit CARD mode) */}
+        <div className={`${viewMode === 'TABLE' ? 'hidden' : viewMode === 'CARD' ? 'block' : 'block md:hidden'} divide-y divide-slate-800/80 p-3 sm:p-4 space-y-3`}>
+          {logs.map(log => (
+            <div
+              key={log.id}
+              className="bg-slate-950 border border-slate-800/90 rounded-2xl p-4 transition space-y-2.5"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-indigo-400 font-bold font-mono text-xs">
+                      {log.action}
+                    </span>
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">
+                      {log.entityType}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-400 font-mono mt-0.5">
+                    {formatLagosDateTime(log.timestamp)}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedLog(log)}
+                  className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-white transition min-h-[38px] min-w-[38px] flex items-center justify-center cursor-pointer"
+                  title="Inspect log details"
+                >
+                  <Eye className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="text-xs">
+                <span className="text-slate-400">Actor: </span>
+                <strong className="text-white font-sans">{log.actorName}</strong>
+                <span className="text-slate-400 font-mono text-[11px] ml-1">({log.actorRole})</span>
+              </div>
+
+              {log.reason && (
+                <div className="text-xs text-slate-300 bg-slate-900/60 p-2.5 rounded-xl border border-slate-800/60 font-sans">
+                  <span className="text-slate-400 text-[11px] block mb-0.5">Audit Note / Reason:</span>
+                  {log.reason}
+                </div>
+              )}
+            </div>
+          ))}
+
+          {logs.length === 0 && (
+            <div className="py-12 text-center text-slate-400 text-xs">
+              No audit records found matching criteria.
+            </div>
+          )}
+        </div>
+
+        {/* DESKTOP TABLE VIEW (md:+ or explicit TABLE mode) */}
+        <div className={`${viewMode === 'CARD' ? 'hidden' : viewMode === 'TABLE' ? 'block' : 'hidden md:block'} overflow-x-auto`}>
+          <table className="w-full text-left text-xs min-w-[700px]">
             <thead>
               <tr className="bg-slate-950/70 border-b border-slate-800 text-slate-400">
-                <th className="py-3 px-4 font-semibold">Timestamp (Lagos)</th>
-                <th className="py-3 px-4 font-semibold">Actor / Staff</th>
-                <th className="py-3 px-4 font-semibold">Action</th>
-                <th className="py-3 px-4 font-semibold">Entity</th>
+                <th className="py-3 px-4 font-semibold whitespace-nowrap">Timestamp (Lagos)</th>
+                <th className="py-3 px-4 font-semibold whitespace-nowrap">Actor / Staff</th>
+                <th className="py-3 px-4 font-semibold whitespace-nowrap">Action</th>
+                <th className="py-3 px-4 font-semibold whitespace-nowrap">Entity</th>
                 <th className="py-3 px-4 font-semibold">Audit Notes / Reason</th>
-                <th className="py-3 px-4 font-semibold text-right">Details</th>
+                <th className="py-3 px-4 font-semibold text-right whitespace-nowrap">Details</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/80 font-mono">
@@ -194,7 +277,7 @@ export function AuditLogsView() {
                     <button
                       type="button"
                       onClick={() => setSelectedLog(log)}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition min-w-[34px] min-h-[34px] inline-flex items-center justify-center cursor-pointer"
                       title="Inspect log payload"
                     >
                       <Eye className="w-4 h-4" />
@@ -215,25 +298,30 @@ export function AuditLogsView() {
         </div>
 
         {/* Pagination Bar */}
-        <div className="p-4 bg-slate-950/80 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+        <div className="p-3.5 sm:p-4 bg-slate-950/80 border-t border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs text-slate-400">
           <div>
-            Showing {logs.length} of {total} entries (Page {page} of {totalPages})
+            Showing <strong className="text-white">{logs.length}</strong> of <strong className="text-white">{total}</strong> entries (Page {page} of {totalPages})
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 self-end sm:self-auto">
             <button
               type="button"
               disabled={page <= 1}
               onClick={() => setPage(page - 1)}
-              className="p-2 rounded-lg border border-slate-800 hover:bg-slate-800 disabled:opacity-40 transition"
+              className="px-3 py-1.5 rounded-lg border border-slate-800 hover:bg-slate-800 disabled:opacity-40 transition flex items-center gap-1 min-h-[36px]"
             >
               <ChevronLeft className="w-4 h-4" />
+              <span>Prev</span>
             </button>
+            <span className="font-mono px-2 text-white font-semibold">
+              {page} / {totalPages}
+            </span>
             <button
               type="button"
               disabled={page >= totalPages}
               onClick={() => setPage(page + 1)}
-              className="p-2 rounded-lg border border-slate-800 hover:bg-slate-800 disabled:opacity-40 transition"
+              className="px-3 py-1.5 rounded-lg border border-slate-800 hover:bg-slate-800 disabled:opacity-40 transition flex items-center gap-1 min-h-[36px]"
             >
+              <span>Next</span>
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>

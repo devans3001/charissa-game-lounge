@@ -191,7 +191,7 @@ export function Navigation({ activeTab, onSelectTab, children }: NavigationProps
                   key={item.id}
                   type="button"
                   onClick={() => handleNavClick(item.id)}
-                  className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition cursor-pointer ${
+                  className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition cursor-pointer min-h-[42px] ${
                     isActive
                       ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/30'
                       : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
@@ -213,19 +213,27 @@ export function Navigation({ activeTab, onSelectTab, children }: NavigationProps
 
         {/* Mobile Navigation Drawer */}
         {mobileMenuOpen && (
-          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm md:hidden flex flex-col p-4 no-print">
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm md:hidden flex flex-col p-4 no-print animate-in fade-in duration-150">
             <div className="flex justify-between items-center mb-6">
-              <span className="font-bold text-white text-base">Navigation</span>
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white">
+                  <Gamepad2 className="w-5 h-5" />
+                </div>
+                <span className="font-bold text-white text-base">Game Lounge Menu</span>
+              </div>
               <button
                 type="button"
                 onClick={() => setMobileMenuOpen(false)}
-                className="p-2 text-slate-400 hover:text-white"
+                className="p-2 text-slate-400 hover:text-white rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center"
               >
                 <X className="w-6 h-6" />
               </button>
             </div>
 
-            <div className="space-y-2 flex-1">
+            <div className="space-y-1.5 flex-1 overflow-y-auto pr-1">
+              <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                All Navigation Destinations
+              </div>
               {navItems.map(item => {
                 const Icon = item.icon;
                 const isActive = activeTab === item.id;
@@ -234,33 +242,116 @@ export function Navigation({ activeTab, onSelectTab, children }: NavigationProps
                     key={item.id}
                     type="button"
                     onClick={() => handleNavClick(item.id)}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition ${
-                      isActive ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800'
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition min-h-[46px] ${
+                      isActive ? 'bg-indigo-600 text-white shadow-md shadow-indigo-950' : 'text-slate-300 hover:bg-slate-800'
                     }`}
                   >
-                    <Icon className="w-5 h-5" />
+                    <Icon className="w-5 h-5 shrink-0" />
                     <span>{item.label}</span>
                   </button>
                 );
               })}
             </div>
 
-            <button
-              type="button"
-              onClick={logout}
-              className="w-full mt-4 py-3 rounded-xl bg-slate-900 border border-slate-800 text-rose-400 text-sm font-semibold flex items-center justify-center gap-2"
-            >
-              <LogOut className="w-4 h-4" />
-              Sign Out
-            </button>
+            <div className="pt-3 border-t border-slate-800 space-y-2">
+              <button
+                type="button"
+                onClick={() => { setShowPasswordModal(true); setMobileMenuOpen(false); }}
+                className="w-full py-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-200 text-sm font-semibold flex items-center justify-center gap-2 min-h-[46px]"
+              >
+                <KeyRound className="w-4 h-4 text-indigo-400" />
+                Change Password
+              </button>
+
+              <button
+                type="button"
+                onClick={logout}
+                className="w-full py-3 rounded-xl bg-slate-900 border border-slate-800 text-rose-400 text-sm font-semibold flex items-center justify-center gap-2 min-h-[46px]"
+              >
+                <LogOut className="w-4 h-4" />
+                Sign Out ({user?.username})
+              </button>
+            </div>
           </div>
         )}
 
         {/* Main Viewport Content */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
+        <main className="flex-1 overflow-y-auto p-3.5 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto pb-24 md:pb-8">
           {children}
         </main>
       </div>
+
+      {/* Mobile Fixed Bottom Navigation Bar (Pattern 1 thumb ergonomics) */}
+      <nav
+        aria-label="Mobile quick navigation"
+        className="fixed bottom-0 left-0 right-0 z-30 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 md:hidden flex items-center justify-around px-2 py-1.5 no-print"
+      >
+        <button
+          type="button"
+          onClick={() => handleNavClick('newsale')}
+          className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl text-[11px] font-semibold transition min-w-[56px] min-h-[48px] ${
+            activeTab === 'newsale' ? 'text-indigo-400 font-bold' : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <PlusCircle className="w-5 h-5 mb-0.5" />
+          <span>POS</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => handleNavClick('dashboard')}
+          className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl text-[11px] font-semibold transition min-w-[56px] min-h-[48px] ${
+            activeTab === 'dashboard' ? 'text-indigo-400 font-bold' : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <LayoutDashboard className="w-5 h-5 mb-0.5" />
+          <span>Dashboard</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => handleNavClick('transactions')}
+          className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl text-[11px] font-semibold transition min-w-[56px] min-h-[48px] ${
+            activeTab === 'transactions' ? 'text-indigo-400 font-bold' : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Receipt className="w-5 h-5 mb-0.5" />
+          <span>Ledger</span>
+        </button>
+
+        {isAdmin ? (
+          <button
+            type="button"
+            onClick={() => handleNavClick('reconciliation')}
+            className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl text-[11px] font-semibold transition min-w-[56px] min-h-[48px] ${
+              activeTab === 'reconciliation' ? 'text-indigo-400 font-bold' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Scale className="w-5 h-5 mb-0.5" />
+            <span>Reconcile</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => handleNavClick('coinvault')}
+            className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl text-[11px] font-semibold transition min-w-[56px] min-h-[48px] ${
+              activeTab === 'coinvault' ? 'text-indigo-400 font-bold' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Coins className="w-5 h-5 mb-0.5" />
+            <span>Float</span>
+          </button>
+        )}
+
+        <button
+          type="button"
+          onClick={() => setMobileMenuOpen(true)}
+          className="flex flex-col items-center justify-center py-1 px-2 rounded-xl text-[11px] font-semibold text-slate-400 hover:text-slate-200 transition min-w-[56px] min-h-[48px]"
+        >
+          <Menu className="w-5 h-5 mb-0.5" />
+          <span>Menu</span>
+        </button>
+      </nav>
     </div>
   );
 }

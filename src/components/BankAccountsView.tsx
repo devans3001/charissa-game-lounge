@@ -149,7 +149,7 @@ export function BankAccountsView() {
                       value={f.bankName}
                       onChange={e => updateForm(slot, 'bankName', e.target.value)}
                       placeholder="e.g. GTBank / Opay / Zenith"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:border-violet-500 outline-none"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm sm:text-xs text-white focus:border-violet-500 outline-none min-h-[42px]"
                     />
                   </div>
                   <div>
@@ -160,7 +160,7 @@ export function BankAccountsView() {
                       onChange={e => updateForm(slot, 'accountNumber', e.target.value.replace(/[^0-9]/g, ''))}
                       placeholder="e.g. 0123456789"
                       maxLength={14}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white font-mono focus:border-violet-500 outline-none"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm sm:text-xs text-white font-mono focus:border-violet-500 outline-none min-h-[42px]"
                     />
                   </div>
                   <div>
@@ -170,7 +170,7 @@ export function BankAccountsView() {
                       value={f.accountName}
                       onChange={e => updateForm(slot, 'accountName', e.target.value)}
                       placeholder="e.g. Charissa Game Lounge Ltd"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:border-violet-500 outline-none"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm sm:text-xs text-white focus:border-violet-500 outline-none min-h-[42px]"
                     />
                   </div>
                   <div>
@@ -180,7 +180,7 @@ export function BankAccountsView() {
                       value={f.label}
                       onChange={e => updateForm(slot, 'label', e.target.value)}
                       placeholder="e.g. Main business account"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:border-violet-500 outline-none"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm sm:text-xs text-white focus:border-violet-500 outline-none min-h-[42px]"
                     />
                   </div>
                 </div>
@@ -195,7 +195,7 @@ export function BankAccountsView() {
                   type="button"
                   onClick={() => handleSave(slot)}
                   disabled={savingSlot === slot}
-                  className="mt-4 w-full py-2.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer"
+                  className="mt-4 w-full py-2.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer min-h-[44px]"
                 >
                   {savingSlot === slot ? (
                     'Saving...'

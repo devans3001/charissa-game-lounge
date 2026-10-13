@@ -332,7 +332,7 @@ export function ReconciliationView() {
                 value={actualCashNaira}
                 onChange={e => setActualCashNaira(e.target.value)}
                 placeholder="0"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-sm text-white font-mono focus:border-indigo-500 outline-none disabled:opacity-60"
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-base sm:text-sm text-white font-mono focus:border-indigo-500 outline-none disabled:opacity-60 min-h-[44px]"
               />
             </div>
 
@@ -346,7 +346,7 @@ export function ReconciliationView() {
                 value={actualPosNaira}
                 onChange={e => setActualPosNaira(e.target.value)}
                 placeholder="0"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-sm text-white font-mono focus:border-indigo-500 outline-none disabled:opacity-60"
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-base sm:text-sm text-white font-mono focus:border-indigo-500 outline-none disabled:opacity-60 min-h-[44px]"
               />
             </div>
 
@@ -360,7 +360,7 @@ export function ReconciliationView() {
                 value={actualTransferNaira}
                 onChange={e => setActualTransferNaira(e.target.value)}
                 placeholder="0"
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-sm text-white font-mono focus:border-indigo-500 outline-none disabled:opacity-60"
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-base sm:text-sm text-white font-mono focus:border-indigo-500 outline-none disabled:opacity-60 min-h-[44px]"
               />
             </div>
 

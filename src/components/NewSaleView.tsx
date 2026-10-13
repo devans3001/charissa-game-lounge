@@ -30,7 +30,8 @@ import {
   Save,
   HelpCircle,
   Landmark,
-  Copy
+  Copy,
+  ShoppingCart
 } from 'lucide-react';
 
 interface CartItem {
@@ -93,6 +94,9 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
 
   // Bank transfer accounts (shown to customers for transfers)
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+
+  // Mobile POS view tab: 'CATALOG' vs 'CART' (Customer details & checkout)
+  const [mobilePosTab, setMobilePosTab] = useState<'CATALOG' | 'CART'>('CATALOG');
 
   useEffect(() => {
     loadGames();
@@ -248,6 +252,7 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
     );
     setIsCheckingOut(false);
     setShowAllTabsModal(false);
+    setMobilePosTab('CART');
   };
 
   // Start a fresh new customer tab / entry
@@ -259,6 +264,7 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
     setCartItems([]);
     setIsCheckingOut(false);
     setError(null);
+    setMobilePosTab('CATALOG');
   };
 
   // Save / Update tab (keep entry open without paying yet)
@@ -609,14 +615,49 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
       )}
 
       {/* =========================================================================
-          MAIN POS WORKSPACE: 2-COLUMN LAYOUT
-          Left: Customer Details & Selected Games Cart
-          Right: Games Selection Catalog
+          MAIN POS WORKSPACE: RESPONSIVE 2-COLUMN LAYOUT
+          Mobile: Fast toggle between Catalog & Customer Bill
+          Desktop: Side-by-side simultaneous POS counter
          ========================================================================= */}
+
+      {/* Mobile Mode Switcher (Visible on < lg) */}
+      <div className="lg:hidden flex items-center bg-slate-900 border border-slate-800 rounded-2xl p-1 gap-1">
+        <button
+          type="button"
+          onClick={() => setMobilePosTab('CATALOG')}
+          className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 min-h-[44px] cursor-pointer ${
+            mobilePosTab === 'CATALOG'
+              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-950'
+              : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <Gamepad2 className="w-4 h-4" />
+          <span>Game Catalog ({games.length})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setMobilePosTab('CART')}
+          className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 min-h-[44px] cursor-pointer ${
+            mobilePosTab === 'CART'
+              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-950'
+              : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <ShoppingCart className="w-4 h-4" />
+          <span>Bill ({cartItems.length})</span>
+          {cartItems.length > 0 && (
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-300 font-bold">
+              {formatNaira(cartGrandTotalKobo)}
+            </span>
+          )}
+        </button>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* LEFT COLUMN: Customer & Cart / Checkout (5 cols on lg) */}
-        <div className="lg:col-span-5 space-y-6">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6 space-y-6 shadow-xl">
+        <div className={`lg:col-span-5 space-y-6 ${mobilePosTab === 'CART' ? 'block' : 'hidden lg:block'}`}>
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-6 shadow-xl">
             {/* Customer Information Header */}
             <div>
               <div className="flex items-center justify-between mb-3">
@@ -1055,8 +1096,8 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
         </div>
 
         {/* RIGHT COLUMN: Games Selection Catalog (7 cols on lg) */}
-        <div className="lg:col-span-7 space-y-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6 space-y-4 shadow-xl">
+        <div className={`lg:col-span-7 space-y-4 ${mobilePosTab === 'CATALOG' ? 'block' : 'hidden lg:block'}`}>
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4 shadow-xl">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
@@ -1230,6 +1271,28 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
           </div>
         </div>
       </div>
+
+      {/* Mobile Floating Cart Summary Button when browsing catalog */}
+      {mobilePosTab === 'CATALOG' && cartItems.length > 0 && (
+        <div className="lg:hidden fixed bottom-16 left-3 right-3 z-30 animate-in fade-in slide-in-from-bottom-2 no-print">
+          <button
+            type="button"
+            onClick={() => setMobilePosTab('CART')}
+            className="w-full py-3 px-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center justify-between shadow-2xl shadow-indigo-950 border border-indigo-400/40 min-h-[48px] cursor-pointer"
+          >
+            <div className="flex items-center gap-2">
+              <ShoppingCart className="w-4 h-4" />
+              <span>{cartItems.length} {cartItems.length === 1 ? 'game' : 'games'} in bill</span>
+              <span className="text-indigo-200">·</span>
+              <span className="font-mono text-emerald-300 text-sm">{formatNaira(cartGrandTotalKobo)}</span>
+            </div>
+            <div className="flex items-center gap-1 font-semibold text-white">
+              <span>Review Bill & Pay</span>
+              <ArrowRight className="w-4 h-4" />
+            </div>
+          </button>
+        </div>
+      )}
 
       {/* =========================================================================
           ALL TABS MANAGEMENT MODAL / DRAWER (Easily manage 20+ active customers)
