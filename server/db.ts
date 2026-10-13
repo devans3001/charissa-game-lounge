@@ -25,6 +25,7 @@ import {
   CoinAllocation,
   CoinCompensation,
   BankAccount,
+  AppSettings,
 } from '../src/types/index.ts';
 
 export interface DbSchema {
@@ -38,6 +39,7 @@ export interface DbSchema {
   coinCompensations: CoinCompensation[];
   bankAccounts: BankAccount[];
   auditLogs: AuditLog[];
+  appSettings: AppSettings | null;
   meta: {
     initialized: boolean;
     version: number;
@@ -140,6 +142,14 @@ function normalizeDb<T extends Partial<DbSchema>>(db: T): DbSchema {
   db.coinCompensations = db.coinCompensations || [];
   db.bankAccounts = db.bankAccounts || [];
   db.auditLogs = db.auditLogs || [];
+  if (!db.appSettings) {
+    db.appSettings = {
+      coinPriceKobo: 50000,
+      updatedBy: 'system',
+      updatedByName: 'System',
+      updatedAt: new Date().toISOString(),
+    };
+  }
   db.meta = db.meta || { initialized: true, version: 1, lastReceiptSeq: 1000, lastTabSeq: 100 };
   return db as DbSchema;
 }
@@ -173,11 +183,18 @@ export async function readDb(): Promise<DbSchema> {
   );
 
   let metaDocData: any = null;
+  let settingsDocData: any = null;
   try {
     const metaDocSnap = await getDoc(doc(fsDb, 'meta', 'system'));
     if (metaDocSnap.exists()) metaDocData = metaDocSnap.data();
   } catch (err: any) {
     console.error('[Firestore] BLOCKED read on meta/system:', err?.message || err);
+  }
+  try {
+    const settingsSnap = await getDoc(doc(fsDb, 'appSettings', 'general'));
+    if (settingsSnap.exists()) settingsDocData = settingsSnap.data();
+  } catch (err: any) {
+    console.error('[Firestore] BLOCKED read on appSettings/general:', err?.message || err);
   }
 
   const db = {} as DbSchema;
@@ -198,6 +215,14 @@ export async function readDb(): Promise<DbSchema> {
     };
   }
   db.meta = meta;
+  db.appSettings = settingsDocData && typeof settingsDocData.coinPriceKobo === 'number'
+    ? {
+        coinPriceKobo: settingsDocData.coinPriceKobo,
+        updatedBy: settingsDocData.updatedBy || 'system',
+        updatedByName: settingsDocData.updatedByName || 'System',
+        updatedAt: settingsDocData.updatedAt || new Date().toISOString(),
+      }
+    : null;
 
   normalizeDb(db);
   loadSnapshots.set(db, snapshotOf(db));
@@ -250,8 +275,21 @@ export async function saveDb(db: DbSchema): Promise<void> {
 
   // meta/system counters: monotonic — never allowed to move backwards
   await persistMeta(db.meta);
+  if (db.appSettings) {
+    try {
+      await persistSettings(db.appSettings);
+    } catch (err: any) {
+      console.error('[Firestore] saveDb: settings write failed:', err?.message || err);
+    }
+  }
 
   loadSnapshots.set(db, snapshotOf(db));
+}
+
+export async function persistSettings(settings: AppSettings): Promise<void> {
+  const fsDb = getFirestore();
+  const clean: any = cleanDoc(settings);
+  await setDoc(doc(fsDb, 'appSettings', 'general'), clean, { merge: true });
 }
 
 async function persistMeta(meta: DbSchema['meta']): Promise<void> {
@@ -352,6 +390,26 @@ function readBackupJson(): DbSchema {
     console.error('Failed to read db.json seed file:', e);
   }
   return createInitialDb();
+}
+
+// Global coin price (kobo). Falls back to 50000 when settings are missing
+// (e.g. blocked read) so sales can never crash on price lookup.
+export function getCoinPriceKobo(db: DbSchema): number {
+  const p = db.appSettings?.coinPriceKobo;
+  return typeof p === 'number' && p > 0 ? p : 50000;
+}
+
+// Ensure a settings object exists (lazy seed at 50000 on first use)
+export function ensureSettings(db: DbSchema): void {
+  if (!db.appSettings) {
+    const now = new Date().toISOString();
+    db.appSettings = {
+      coinPriceKobo: 50000,
+      updatedBy: 'system',
+      updatedByName: 'System',
+      updatedAt: now,
+    };
+  }
 }
 
 // Log audit helper (append-only — audit logs are NEVER updated or deleted)
@@ -543,6 +601,7 @@ function createInitialDb(): DbSchema {
     },
   ];
 
+  const settingsNow = new Date().toISOString();
   return {
     users,
     games,
@@ -554,6 +613,12 @@ function createInitialDb(): DbSchema {
     coinCompensations: [],
     bankAccounts: [],
     auditLogs,
+    appSettings: {
+      coinPriceKobo: 50000,
+      updatedBy: adminId,
+      updatedByName: 'System Bootstrap',
+      updatedAt: settingsNow,
+    },
     meta: {
       initialized: true,
       version: 1,

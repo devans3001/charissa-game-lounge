@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Game, GameCategory } from '../types/index.ts';
+import { Game, GameCategory, AppSettings } from '../types/index.ts';
 import { api } from '../lib/api.ts';
 import { formatNaira, nairaToKobo, koboToNaira } from '../lib/utils.ts';
 import {
@@ -27,13 +27,17 @@ export function GameManagementView() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingGame, setEditingGame] = useState<Game | null>(null);
 
+  // Global coin price (one price for ALL coin games)
+  const [coinPrice, setCoinPrice] = useState<AppSettings | null>(null);
+  const [coinPriceInput, setCoinPriceInput] = useState('500');
+  const [savingCoinPrice, setSavingCoinPrice] = useState(false);
+
   // Form states for Add/Edit
   const [formName, setFormName] = useState('');
   const [formCategory, setFormCategory] = useState<GameCategory>('PS_GAME');
   const [formDescription, setFormDescription] = useState('');
   const [formStandardPriceNaira, setFormStandardPriceNaira] = useState('1500');
   const [formCoinsRequired, setFormCoinsRequired] = useState('4');
-  const [formPricePerCoinNaira, setFormPricePerCoinNaira] = useState('500');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -44,12 +48,39 @@ export function GameManagementView() {
     try {
       setLoading(true);
       setError(null);
-      const res = await api.games.list(true); // all = true for admin
-      setGames(res.games);
+      const [gamesRes, settingsRes] = await Promise.all([
+        api.games.list(true), // all = true for admin
+        api.settings.get(),
+      ]);
+      setGames(gamesRes.games);
+      setCoinPrice(settingsRes.settings);
+      setCoinPriceInput(koboToNaira(settingsRes.settings.coinPriceKobo).toString());
     } catch (err: any) {
       setError(err.message || 'Failed to load games catalog');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSaveCoinPrice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const kobo = nairaToKobo(coinPriceInput);
+    if (!Number.isFinite(kobo) || kobo <= 0) {
+      setError('Enter a valid coin price greater than zero.');
+      return;
+    }
+    try {
+      setSavingCoinPrice(true);
+      setError(null);
+      const res = await api.settings.updateCoinPrice(kobo);
+      setCoinPrice(res.settings);
+      setCoinPriceInput(koboToNaira(res.settings.coinPriceKobo).toString());
+      setSuccessMessage(`Global coin price updated to ${formatNaira(res.settings.coinPriceKobo)} — all coin games re-priced instantly.`);
+      loadGames();
+    } catch (err: any) {
+      setError(err.message || 'Failed to update coin price');
+    } finally {
+      setSavingCoinPrice(false);
     }
   };
 
@@ -59,7 +90,6 @@ export function GameManagementView() {
     setFormDescription('');
     setFormStandardPriceNaira('1500');
     setFormCoinsRequired('4');
-    setFormPricePerCoinNaira('500');
     setShowAddModal(true);
   };
 
@@ -70,7 +100,6 @@ export function GameManagementView() {
     setFormDescription(game.description || '');
     setFormStandardPriceNaira(koboToNaira(game.standardPriceKobo).toString());
     setFormCoinsRequired(game.coinsRequired.toString());
-    setFormPricePerCoinNaira(koboToNaira(game.pricePerCoinKobo).toString());
   };
 
   const handleToggleStatus = async (game: Game) => {
@@ -99,7 +128,6 @@ export function GameManagementView() {
 
       const standardPriceKobo = nairaToKobo(formStandardPriceNaira);
       const coinsRequired = parseInt(formCoinsRequired, 10) || 1;
-      const pricePerCoinKobo = nairaToKobo(formPricePerCoinNaira);
 
       if (editingGame) {
         await api.games.update(editingGame.id, {
@@ -107,7 +135,6 @@ export function GameManagementView() {
           description: formDescription.trim(),
           standardPriceKobo,
           coinsRequired,
-          pricePerCoinKobo,
         });
         setSuccessMessage(`Game "${formName}" pricing and configuration updated successfully.`);
         setEditingGame(null);
@@ -118,7 +145,6 @@ export function GameManagementView() {
           description: formDescription.trim(),
           standardPriceKobo,
           coinsRequired,
-          pricePerCoinKobo,
         });
         setSuccessMessage(`New game "${formName}" added to catalog.`);
         setShowAddModal(false);
@@ -134,8 +160,8 @@ export function GameManagementView() {
 
   // Preview calculated price
   const previewCoins = parseInt(formCoinsRequired, 10) || 1;
-  const previewCoinPrice = nairaToKobo(formPricePerCoinNaira);
-  const calculatedCoinPriceKobo = previewCoins * previewCoinPrice;
+  const globalCoinPriceKobo = coinPrice ? coinPrice.coinPriceKobo : nairaToKobo('500');
+  const calculatedCoinPriceKobo = previewCoins * globalCoinPriceKobo;
   const calculatedPreviewPriceKobo =
     formCategory === 'COIN_GAME' ? calculatedCoinPriceKobo : nairaToKobo(formStandardPriceNaira);
 
@@ -161,6 +187,39 @@ export function GameManagementView() {
           <Plus className="w-4 h-4" />
           Add New Game
         </button>
+      </div>
+
+      {/* Global Coin Price — one price applied to ALL coin games */}
+      <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Global Coin Price</span>
+          <p className="text-xs text-slate-300 mt-0.5">
+            One price for every coin game. Applied live to all future coin sales and to the
+            calculated price card below.
+          </p>
+        </div>
+
+        <form onSubmit={handleSaveCoinPrice} className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+          <div className="relative flex-1 sm:flex-initial">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-mono">&#8358;</span>
+            <input
+              type="number"
+              min="0"
+              step="10"
+              value={coinPriceInput}
+              onChange={e => setCoinPriceInput(e.target.value)}
+              className="w-full sm:w-44 bg-slate-950 border border-slate-800 rounded-xl pl-3.5 pr-3 py-2 text-xs text-white font-mono focus:border-indigo-500 outline-none shadow-sm"
+              placeholder="500"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={savingCoinPrice}
+            className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold transition cursor-pointer whitespace-nowrap"
+          >
+            {savingCoinPrice ? 'Updating...' : 'Apply Global Price'}
+          </button>
+        </form>
       </div>
 
       {error && (
@@ -231,14 +290,10 @@ export function GameManagementView() {
                       <span>Required Coins:</span>
                       <span className="font-mono text-amber-300">{game.coinsRequired} coins</span>
                     </div>
-                    <div className="flex justify-between text-xs text-slate-400">
-                      <span>Price per Coin:</span>
-                      <span className="font-mono text-slate-200">{formatNaira(game.pricePerCoinKobo)}</span>
-                    </div>
                     <div className="border-t border-slate-800 pt-1.5 flex justify-between items-baseline text-xs">
-                      <span className="font-semibold text-slate-300">Play Price (Coins × Rate):</span>
+                      <span className="font-semibold text-slate-300">Play Price (Coins × Global Rate):</span>
                       <span className="font-mono font-bold text-emerald-400 text-sm">
-                        {formatNaira(game.calculatedPriceKobo)}
+                        {formatNaira(game.coinsRequired * globalCoinPriceKobo)}
                       </span>
                     </div>
                   </>
@@ -362,17 +417,6 @@ export function GameManagementView() {
                         required
                         value={formCoinsRequired}
                         onChange={e => setFormCoinsRequired(e.target.value)}
-                        className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-amber-500 outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">Price per Coin (₦)</label>
-                      <input
-                        type="number"
-                        min="0"
-                        required
-                        value={formPricePerCoinNaira}
-                        onChange={e => setFormPricePerCoinNaira(e.target.value)}
                         className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-amber-500 outline-none"
                       />
                     </div>

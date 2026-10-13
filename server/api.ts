@@ -9,6 +9,8 @@ import {
   allocateTabSeq,
   getLagosDateString,
   getLagosIsoString,
+  getCoinPriceKobo,
+  ensureSettings,
 } from './db.ts';
 import {
   authenticate,
@@ -281,6 +283,66 @@ api.post('/auth/setup-admin', async (req, res) => {
 });
 
 // ==========================================
+// 1b. APP SETTINGS (global coin price — one price for ALL coin games)
+// ==========================================
+
+api.get('/settings', authenticate, async (req: AuthRequest, res) => {
+  const db = await readDb();
+  ensureSettings(db);
+  res.json({ settings: db.appSettings });
+});
+
+api.put('/settings/coin-price', authenticate, requireAdmin, async (req: AuthRequest, res) => {
+  const { coinPriceKobo } = req.body;
+  const price = parseInt(coinPriceKobo, 10);
+  if (!Number.isFinite(price) || price <= 0) {
+    res.status(400).json({ error: 'Coin price must be a positive amount in kobo.' });
+    return;
+  }
+
+  const db = await readDb();
+  ensureSettings(db);
+  const previousPrice = db.appSettings!.coinPriceKobo;
+  if (previousPrice === price) {
+    res.json({ settings: db.appSettings });
+    return;
+  }
+
+  db.appSettings!.coinPriceKobo = price;
+  db.appSettings!.updatedBy = req.user!.id;
+  db.appSettings!.updatedByName = req.user!.name;
+  db.appSettings!.updatedAt = new Date().toISOString();
+
+  // Re-price every coin game's calculated price from the new global price.
+  // Stored snapshots on past transactions/tabs are untouched (history keeps
+  // the price from the moment of sale / tab-open).
+  for (const g of db.games) {
+    if (g.category === 'COIN_GAME') {
+      g.pricePerCoinKobo = price;
+      g.calculatedPriceKobo = g.coinsRequired * price;
+      g.updatedBy = req.user!.id;
+      g.updatedAt = db.appSettings!.updatedAt;
+    }
+  }
+
+  await saveDb(db);
+
+  await addAuditLog(
+    { id: req.user!.id, name: req.user!.name, role: req.user!.role },
+    'COIN_PRICE_UPDATED',
+    'GAME',
+    'global_coin_price',
+    {
+      previousValues: { coinPriceKobo: previousPrice },
+      newValues: { coinPriceKobo: price },
+      reason: `Global coin price updated from N${(previousPrice / 100).toLocaleString()} to N${(price / 100).toLocaleString()} — applies to all coin games`,
+    }
+  );
+
+  res.json({ settings: db.appSettings });
+});
+
+// ==========================================
 // 2. GAMES & PRICING MANAGEMENT
 // ==========================================
 
@@ -316,6 +378,10 @@ api.post('/games', authenticate, requireAdmin, async (req: AuthRequest, res) => 
     return;
   }
 
+  const db0 = await readDb();
+  ensureSettings(db0);
+  const globalCoinPrice = getCoinPriceKobo(db0);
+
   let calculatedPriceKobo = 0;
   let finalCoinsRequired = 0;
   let finalPricePerCoinKobo = 0;
@@ -323,7 +389,8 @@ api.post('/games', authenticate, requireAdmin, async (req: AuthRequest, res) => 
 
   if (category === 'COIN_GAME') {
     finalCoinsRequired = Math.max(1, parseInt(coinsRequired || 1, 10));
-    finalPricePerCoinKobo = Math.max(0, parseInt(pricePerCoinKobo || 0, 10));
+    // One global coin price for ALL coin games — per-game price input ignored
+    finalPricePerCoinKobo = globalCoinPrice;
     calculatedPriceKobo = finalCoinsRequired * finalPricePerCoinKobo;
   } else {
     finalStandardPriceKobo = Math.max(0, parseInt(standardPriceKobo || 0, 10));
@@ -331,7 +398,7 @@ api.post('/games', authenticate, requireAdmin, async (req: AuthRequest, res) => 
   }
 
   const now = new Date().toISOString();
-  const db = await readDb();
+  const db = db0;
   const gameId = `game_${category.toLowerCase()}_${Date.now()}`;
 
   const newGame: Game = {
@@ -397,12 +464,12 @@ api.put('/games/:id', authenticate, requireAdmin, async (req: AuthRequest, res) 
   if (description !== undefined) currentGame.description = description.trim();
 
   if (currentGame.category === 'COIN_GAME') {
+    ensureSettings(db);
     if (coinsRequired !== undefined) {
       currentGame.coinsRequired = Math.max(1, parseInt(coinsRequired, 10));
     }
-    if (pricePerCoinKobo !== undefined) {
-      currentGame.pricePerCoinKobo = Math.max(0, parseInt(pricePerCoinKobo, 10));
-    }
+    // One global coin price — per-game price input ignored
+    currentGame.pricePerCoinKobo = getCoinPriceKobo(db);
     currentGame.calculatedPriceKobo = currentGame.coinsRequired * currentGame.pricePerCoinKobo;
   } else {
     if (standardPriceKobo !== undefined) {
@@ -505,6 +572,8 @@ api.post('/transactions', authenticate, async (req: AuthRequest, res) => {
   }
 
   const db = await readDb();
+  ensureSettings(db);
+  const coinPriceNow = getCoinPriceKobo(db);
   let transactionItems: TransactionItem[] = [];
   let totalAmountKobo = 0;
   let summaryGameId = '';
@@ -525,7 +594,8 @@ api.post('/transactions', authenticate, async (req: AuthRequest, res) => {
         return;
       }
       const qty = Math.max(1, parseInt(it.quantity || 1, 10));
-      const uPrice = game.calculatedPriceKobo;
+      // Coin games are ALWAYS priced from the live global coin price
+      const uPrice = game.category === 'COIN_GAME' ? game.coinsRequired * coinPriceNow : game.calculatedPriceKobo;
       const itemTotal = uPrice * qty;
       totalAmountKobo += itemTotal;
       totalQuantity += qty;
@@ -539,7 +609,7 @@ api.post('/transactions', authenticate, async (req: AuthRequest, res) => {
         unitPriceKobo: uPrice,
         totalAmountKobo: itemTotal,
         coinsRequiredSnapshot: game.category === 'COIN_GAME' ? game.coinsRequired : undefined,
-        pricePerCoinKoboSnapshot: game.category === 'COIN_GAME' ? game.pricePerCoinKobo : undefined,
+        pricePerCoinKoboSnapshot: game.category === 'COIN_GAME' ? coinPriceNow : undefined,
       });
     }
 
@@ -577,7 +647,7 @@ api.post('/transactions', authenticate, async (req: AuthRequest, res) => {
       return;
     }
 
-    const unitPriceKobo = game.calculatedPriceKobo;
+    const unitPriceKobo = game.category === 'COIN_GAME' ? game.coinsRequired * coinPriceNow : game.calculatedPriceKobo;
     totalAmountKobo = unitPriceKobo * cleanQuantity;
     totalQuantity = cleanQuantity;
     summaryGameId = game.id;
@@ -585,7 +655,7 @@ api.post('/transactions', authenticate, async (req: AuthRequest, res) => {
     summaryCategory = game.category;
     primaryUnitPriceKobo = unitPriceKobo;
     snapshotCoins = game.category === 'COIN_GAME' ? game.coinsRequired : undefined;
-    snapshotCoinPrice = game.category === 'COIN_GAME' ? game.pricePerCoinKobo : undefined;
+    snapshotCoinPrice = game.category === 'COIN_GAME' ? coinPriceNow : undefined;
 
     transactionItems = [{
       id: `txn_item_${crypto.randomUUID()}`,
@@ -650,6 +720,104 @@ api.post('/transactions', authenticate, async (req: AuthRequest, res) => {
         paymentReference: newTxn.paymentReference,
         cashierName: newTxn.cashierName,
       },
+    }
+  );
+
+  res.status(201).json({ transaction: newTxn });
+});
+
+// QUICK COIN SALE — crowd mode: customer pays instantly for N prepaid coins
+// (max 50 per sale), no game named. Deducts N from the cashier's float via
+// the standard soldCoins path (coinsRequiredSnapshot = N on a COIN_GAME item).
+api.post('/transactions/quick-coins', authenticate, async (req: AuthRequest, res) => {
+  const { coins, paymentMethod, paymentReference, senderName, customerName } = req.body;
+
+  const coinCount = parseInt(coins, 10);
+  if (!Number.isFinite(coinCount) || coinCount < 1 || coinCount > 50) {
+    res.status(400).json({ error: 'Coin count must be between 1 and 50 per quick sale.' });
+    return;
+  }
+
+  const validMethods: PaymentMethod[] = ['CASH', 'POS', 'BANK_TRANSFER'];
+  if (!validMethods.includes(paymentMethod)) {
+    res.status(400).json({ error: 'Invalid payment method. Must be CASH, POS, or BANK_TRANSFER.' });
+    return;
+  }
+
+  if (paymentMethod === 'BANK_TRANSFER') {
+    if (!senderName || !senderName.trim()) {
+      res.status(400).json({ error: 'Sender name is required for bank transfer verification.' });
+      return;
+    }
+  }
+
+  const db = await readDb();
+  ensureSettings(db);
+  const coinPrice = getCoinPriceKobo(db);
+  const totalAmountKobo = coinCount * coinPrice;
+
+  const now = new Date();
+  const businessDate = getLagosDateString(now);
+
+  const seq = await allocateReceiptSeq();
+  const receiptNumber = `GL-${businessDate.replace(/-/g, '')}-${seq}`;
+  const transactionId = `txn_${crypto.randomUUID()}`;
+  const packName = `Game Coins x ${coinCount} (prepaid)`;
+
+  const packItem: TransactionItem = {
+    id: `txn_item_${crypto.randomUUID()}`,
+    gameId: 'coin_pack',
+    gameName: packName,
+    gameCategory: 'COIN_GAME',
+    quantity: 1,
+    unitPriceKobo: totalAmountKobo,
+    totalAmountKobo,
+    coinsRequiredSnapshot: coinCount,
+    pricePerCoinKoboSnapshot: coinPrice,
+  };
+
+  const newTxn: Transaction = {
+    id: transactionId,
+    receiptNumber,
+    customerName: customerName ? customerName.trim() : undefined,
+    items: [packItem],
+    gameId: 'coin_pack',
+    gameName: packName,
+    gameCategory: 'COIN_GAME',
+    quantity: 1,
+    coinsRequiredSnapshot: coinCount,
+    pricePerCoinKoboSnapshot: coinPrice,
+    unitPriceKobo: totalAmountKobo,
+    totalAmountKobo,
+    paymentMethod,
+    paymentReference: paymentReference ? paymentReference.trim() : undefined,
+    senderName: senderName ? senderName.trim() : undefined,
+    cashierId: req.user!.id,
+    cashierName: req.user!.name,
+    status: 'COMPLETED',
+    timestamp: now.toISOString(),
+    businessDate,
+    createdAt: now.toISOString(),
+  };
+
+  db.transactions.unshift(newTxn);
+  await saveDb(db);
+
+  await addAuditLog(
+    { id: req.user!.id, name: req.user!.name, role: req.user!.role },
+    'TRANSACTION_RECORDED',
+    'TRANSACTION',
+    newTxn.id,
+    {
+      newValues: {
+        receiptNumber: newTxn.receiptNumber,
+        gameName: newTxn.gameName,
+        coins: coinCount,
+        totalAmountKobo: newTxn.totalAmountKobo,
+        paymentMethod: newTxn.paymentMethod,
+        cashierName: newTxn.cashierName,
+      },
+      reason: `Quick coin sale: ${coinCount} prepaid coins`,
     }
   );
 
@@ -1047,6 +1215,8 @@ api.post('/tabs', authenticate, async (req: AuthRequest, res) => {
 
   const db = await readDb();
   db.customerTabs = db.customerTabs || [];
+  ensureSettings(db);
+  const tabCoinPrice = getCoinPriceKobo(db);
 
   const processedItems: CustomerTabItem[] = [];
   let totalKobo = 0;
@@ -1057,7 +1227,8 @@ api.post('/tabs', authenticate, async (req: AuthRequest, res) => {
       const game = db.games.find(g => g.id === it.gameId);
       if (!game) continue;
       const qty = Math.max(1, parseInt(it.quantity || 1, 10));
-      const unitPriceKobo = game.calculatedPriceKobo;
+      // Tab-open price: coin games priced from the live global coin price
+      const unitPriceKobo = game.category === 'COIN_GAME' ? game.coinsRequired * tabCoinPrice : game.calculatedPriceKobo;
       const itemTotalKobo = unitPriceKobo * qty;
       totalKobo += itemTotalKobo;
 
@@ -1070,7 +1241,7 @@ api.post('/tabs', authenticate, async (req: AuthRequest, res) => {
         unitPriceKobo,
         totalAmountKobo: itemTotalKobo,
         coinsRequiredSnapshot: game.category === 'COIN_GAME' ? game.coinsRequired : undefined,
-        pricePerCoinKoboSnapshot: game.category === 'COIN_GAME' ? game.pricePerCoinKobo : undefined,
+        pricePerCoinKoboSnapshot: game.category === 'COIN_GAME' ? tabCoinPrice : undefined,
         addedAt: new Date().toISOString(),
       });
     }
@@ -1144,6 +1315,11 @@ api.put('/tabs/:id', authenticate, async (req: AuthRequest, res) => {
   }
 
   if (Array.isArray(items)) {
+    ensureSettings(db);
+    const liveCoinPrice = getCoinPriceKobo(db);
+    // Preserve each existing item's tab-open price (unitPrice + coin snapshot).
+    // Only brand-new items are priced from the live catalog/global price.
+    const prevById = new Map((tab.items || []).map(p => [p.id, p]));
     const processedItems: CustomerTabItem[] = [];
     let totalKobo = 0;
 
@@ -1152,7 +1328,21 @@ api.put('/tabs/:id', authenticate, async (req: AuthRequest, res) => {
       const game = db.games.find(g => g.id === it.gameId);
       if (!game) continue;
       const qty = Math.max(1, parseInt(it.quantity || 1, 10));
-      const unitPriceKobo = game.calculatedPriceKobo;
+      const prev = it.id ? prevById.get(it.id) : undefined;
+
+      let unitPriceKobo: number;
+      let coinsSnap: number | undefined;
+      let coinPriceSnap: number | undefined;
+      if (prev && prev.gameId === game.id) {
+        // Existing line: keep tab-open price even if global price changed
+        unitPriceKobo = prev.unitPriceKobo;
+        coinsSnap = prev.coinsRequiredSnapshot;
+        coinPriceSnap = prev.pricePerCoinKoboSnapshot;
+      } else {
+        unitPriceKobo = game.category === 'COIN_GAME' ? game.coinsRequired * liveCoinPrice : game.calculatedPriceKobo;
+        coinsSnap = game.category === 'COIN_GAME' ? game.coinsRequired : undefined;
+        coinPriceSnap = game.category === 'COIN_GAME' ? liveCoinPrice : undefined;
+      }
       const itemTotalKobo = unitPriceKobo * qty;
       totalKobo += itemTotalKobo;
 
@@ -1164,8 +1354,8 @@ api.put('/tabs/:id', authenticate, async (req: AuthRequest, res) => {
         quantity: qty,
         unitPriceKobo,
         totalAmountKobo: itemTotalKobo,
-        coinsRequiredSnapshot: game.category === 'COIN_GAME' ? game.coinsRequired : undefined,
-        pricePerCoinKoboSnapshot: game.category === 'COIN_GAME' ? game.pricePerCoinKobo : undefined,
+        coinsRequiredSnapshot: coinsSnap,
+        pricePerCoinKoboSnapshot: coinPriceSnap,
         addedAt: it.addedAt || new Date().toISOString(),
       });
     }

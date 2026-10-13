@@ -73,5 +73,10 @@ service cloud.firestore {
     match /meta/{metaId} {
       allow read, write: if true;
     }
+
+    // App settings (global coin price — single doc appSettings/general)
+    match /appSettings/{settingId} {
+      allow read, write: if true;
+    }
   }
 }

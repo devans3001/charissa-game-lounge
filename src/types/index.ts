@@ -237,6 +237,13 @@ export interface CashierCoinBalance {
   notes?: string;
 }
 
+export interface AppSettings {
+  coinPriceKobo: number; // global price of ONE coin (e.g. 50000 = 500 Naira) — applies to ALL coin games
+  updatedBy: string;
+  updatedByName: string;
+  updatedAt: string;
+}
+
 export interface BankAccount {
   id: string;
   slotNumber: 1 | 2 | 3;

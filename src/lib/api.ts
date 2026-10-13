@@ -11,6 +11,7 @@ import {
   CoinCompensation,
   CashierCoinBalance,
   BankAccount,
+  AppSettings,
   DashboardStats,
   PaymentMethod,
   GameCategory,
@@ -80,6 +81,15 @@ export const api = {
       }),
   },
 
+  settings: {
+    get: () => request<{ settings: AppSettings }>('/api/settings'),
+    updateCoinPrice: (coinPriceKobo: number) =>
+      request<{ settings: AppSettings }>('/api/settings/coin-price', {
+        method: 'PUT',
+        body: JSON.stringify({ coinPriceKobo }),
+      }),
+  },
+
   games: {
     list: (all: boolean = false) =>
       request<{ games: Game[] }>(`/api/games${all ? '?all=true' : ''}`),
@@ -117,6 +127,17 @@ export const api = {
   },
 
   transactions: {
+    quickCoins: (data: {
+      coins: number;
+      paymentMethod: PaymentMethod;
+      paymentReference?: string;
+      senderName?: string;
+      customerName?: string;
+    }) =>
+      request<{ transaction: Transaction }>('/api/transactions/quick-coins', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
     create: (data: {
       gameId?: string;
       quantity?: number;

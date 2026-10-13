@@ -81,6 +81,12 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
   const [shiftCount, setShiftCount] = useState<number>(0);
   const [shiftTotalKobo, setShiftTotalKobo] = useState<number>(0);
 
+  // Quick coin sale (crowd mode): prepaid coins with no game named
+  const [showQuickCoins, setShowQuickCoins] = useState(false);
+  const [quickCoinCount, setQuickCoinCount] = useState('');
+  const [quickToken, setQuickToken] = useState('');
+  const [quickSalePending, setQuickSalePending] = useState(false);
+
   // Loading & Feedback
   const [savingTab, setSavingTab] = useState(false);
   const [submittingPayment, setSubmittingPayment] = useState(false);
@@ -342,6 +348,42 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
       handleStartNewTab();
     } catch (err: any) {
       setError(err.message || 'Failed to delete customer tab');
+    }
+  };
+
+  // Quick prepaid coin sale (crowd mode) — no game named, instant cash/card after
+  const handleQuickCoinSale = async () => {
+    const count = parseInt(quickCoinCount, 10);
+    if (!Number.isFinite(count) || count < 1 || count > 50) {
+      setError('Coin count must be a whole number between 1 and 50.');
+      return;
+    }
+
+    setQuickSalePending(true);
+    setError(null);
+
+    try {
+      const res = await api.transactions.quickCoins({
+        coins: count,
+        paymentMethod: paymentMethod,
+        paymentReference: paymentReference.trim() || undefined,
+        senderName: paymentMethod === 'BANK_TRANSFER' ? senderName.trim() : undefined,
+      });
+
+      // Refresh shift stats from the newly recorded sale
+      await loadCashierShiftStats();
+
+      // Return to draft / clear the quick-sale form
+      setShowQuickCoins(false);
+      setQuickCoinCount('');
+      setQuickToken('');
+      setQuickSalePending(false);
+
+      // Persist a neutral success message (front-end; audit log is on the server)
+      setSuccessToast(`Sold ${count} prepaid coins for ${formatNaira(res.transaction.totalAmountKobo)}.`);
+    } catch (err: any) {
+      setError(err.message || 'Quick coin sale failed');
+      setQuickSalePending(false);
     }
   };
 
@@ -853,6 +895,16 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
                       )}
                     </button>
 
+                    {/* Action 3: Quick prepaid coin sale (crowd mode) */}
+                    <button
+                      type="button"
+                      onClick={() => setShowQuickCoins(true)}
+                      className="py-3 px-3 rounded-xl bg-amber-600/20 hover:bg-amber-600/30 active:bg-amber-600/40 text-amber-300 font-semibold text-xs flex items-center justify-center gap-2 border border-amber-500/30 transition cursor-pointer shadow-sm"
+                    >
+                      <Coins className="w-4 h-4" />
+                      Quick Coin Sale (cash/card after)
+                    </button>
+
                     {/* Action 2: Proceed to Checkout / Payment */}
                     <button
                       type="button"
@@ -1096,6 +1148,113 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
             </div>
           </div>
         </div>
+
+        {/* =========================================================================
+            QUICK COIN SALE PANEL (crowd mode — prepaid coins, no game named)
+           ========================================================================= */}
+        {showQuickCoins && (
+          <div className="lg:col-span-7 space-y-4">
+            <div className="bg-slate-900 border border-amber-500/30 rounded-2xl p-4 sm:p-6">
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-md bg-amber-500/20 text-amber-400 flex items-center justify-center text-xs font-bold">
+                    7
+                  </div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400">
+                    Quick Coin Sale — Prepaid Coins
+                  </h3>
+                  <span className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                    Crowd Mode
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowQuickCoins(false);
+                    setQuickCoinCount('');
+                    setQuickToken('');
+                    setQuickSalePending(false);
+                    setError(null);
+                  }}
+                  className="text-xs text-slate-400 hover:text-white cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                    Prepaid Coin Count <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="50"
+                    required
+                    value={quickCoinCount}
+                    onChange={e => setQuickCoinCount(e.target.value)}
+                    placeholder="e.g. 10"
+                    className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 outline-none"
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Max 50 coins per quick sale. No game selected — customer pays instantly for N coins.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                    Token / OTP <span className="text-slate-400">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={quickToken}
+                    onChange={e => setQuickToken(e.target.value)}
+                    placeholder="Coupon code, gift card code, etc."
+                    className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
+                  />
+                </div>
+
+                {error && quickSalePending === false && (
+                  <div className="p-3 rounded-xl bg-red-950/40 border border-red-800/50 text-red-200 text-xs">
+                    {error}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={handleQuickCoinSale}
+                  disabled={quickSalePending || !quickCoinCount.trim()}
+                  className="flex-1 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white font-bold text-sm flex items-center justify-center gap-2 transition cursor-pointer"
+                >
+                  {quickSalePending ? (
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <Coins className="w-4 h-4" />
+                      Sell {quickCoinCount.trim() || '?'} Coins
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowQuickCoins(false);
+                    setQuickCoinCount('');
+                    setQuickToken('');
+                    setQuickSalePending(false);
+                    setError(null);
+                  }}
+                  className="px-4 py-2.5 rounded-xl border border-slate-800 text-slate-400 hover:text-white text-sm font-semibold transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* RIGHT COLUMN: Games Selection Catalog (7 cols on lg) */}
         <div className={`lg:col-span-7 space-y-4 ${mobilePosTab === 'CATALOG' ? 'block' : 'hidden lg:block'}`}>
