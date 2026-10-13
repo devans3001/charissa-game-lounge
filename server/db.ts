@@ -10,6 +10,9 @@ import {
   DailyReconciliation,
   CorrectionRequest,
   AuditLog,
+  CoinAllocation,
+  CoinCompensation,
+  BankAccount,
   GameCategory,
   PaymentMethod,
 } from '../src/types/index.ts';
@@ -21,6 +24,9 @@ interface DbSchema {
   customerTabs: CustomerTab[];
   reconciliations: DailyReconciliation[];
   correctionRequests: CorrectionRequest[];
+  coinAllocations: CoinAllocation[];
+  coinCompensations: CoinCompensation[];
+  bankAccounts: BankAccount[];
   auditLogs: AuditLog[];
   meta: {
     initialized: boolean;
@@ -67,10 +73,17 @@ export function readDb(): DbSchema {
     if (!dbCache!.customerTabs) {
       dbCache!.customerTabs = [];
     }
+    // Lazy migration for coin vault & bank account collections
+    if (!dbCache!.coinAllocations) dbCache!.coinAllocations = [];
+    if (!dbCache!.coinCompensations) dbCache!.coinCompensations = [];
+    if (!dbCache!.bankAccounts) dbCache!.bankAccounts = [];
     return dbCache!;
   } catch (err) {
     if (dbCache) {
       if (!dbCache.customerTabs) dbCache.customerTabs = [];
+      if (!dbCache.coinAllocations) dbCache.coinAllocations = [];
+      if (!dbCache.coinCompensations) dbCache.coinCompensations = [];
+      if (!dbCache.bankAccounts) dbCache.bankAccounts = [];
       return dbCache;
     }
     console.error('Error reading DB, re-initializing backup:', err);
@@ -246,6 +259,9 @@ function createInitialDb(): DbSchema {
     customerTabs: [],
     reconciliations,
     correctionRequests: [],
+    coinAllocations: [],
+    coinCompensations: [],
+    bankAccounts: [],
     auditLogs,
     meta: {
       initialized: true,
@@ -260,7 +276,7 @@ function createInitialDb(): DbSchema {
 export function addAuditLog(
   actor: { id: string; name: string; role: 'ADMIN' | 'CASHIER' | 'SYSTEM' },
   action: string,
-  entityType: 'TRANSACTION' | 'GAME' | 'USER' | 'RECONCILIATION' | 'CORRECTION_REQUEST' | 'SYSTEM',
+  entityType: 'TRANSACTION' | 'GAME' | 'USER' | 'RECONCILIATION' | 'CORRECTION_REQUEST' | 'COIN_ALLOCATION' | 'COIN_COMPENSATION' | 'BANK_ACCOUNT' | 'SYSTEM',
   entityId: string,
   details: {
     previousValues?: Record<string, any>;

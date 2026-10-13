@@ -22,6 +22,10 @@ import {
   CustomerTabItem,
   DailyReconciliation,
   CorrectionRequest,
+  CoinAllocation,
+  CoinCompensation,
+  CashierCoinBalance,
+  BankAccount,
   PaymentMethod,
   GameCategory,
   DashboardStats,
@@ -1671,6 +1675,28 @@ api.get('/dashboard/stats', authenticate, (req: AuthRequest, res) => {
 
   const recentTransactions = txns.slice(0, 10);
 
+  // Coin float statistics for the selected period (all cashiers or own)
+  const periodAllocations = db.coinAllocations.filter(
+    a => a.businessDate >= startDate && a.businessDate <= endDate && (req.user!.role === 'ADMIN' || a.cashierId === req.user!.id)
+  );
+  const periodCompensations = db.coinCompensations.filter(
+    c => c.businessDate >= startDate && c.businessDate <= endDate && (req.user!.role === 'ADMIN' || c.cashierId === req.user!.id)
+  );
+  const periodAllTxns = db.transactions.filter(
+    t => t.businessDate >= startDate && t.businessDate <= endDate && (req.user!.role === 'ADMIN' || t.cashierId === req.user!.id)
+  );
+
+  let totalAllocatedCoins = periodAllocations.reduce((s, a) => s + a.initialCoins, 0);
+  let totalSoldCoins = 0;
+  let totalVoidedCoins = 0;
+  for (const t of periodAllTxns) {
+    const coins = countCoinsInTxn(t);
+    if (coins <= 0) continue;
+    if (t.status === 'VOIDED') totalVoidedCoins += coins;
+    else totalSoldCoins += coins;
+  }
+  const totalCompensatedCoins = periodCompensations.reduce((s, c) => s + c.coinsIssued, 0);
+
   // Check reconciliation status for today
   const todayRec = db.reconciliations.find(r => r.businessDate === todayLagos);
 
@@ -1687,6 +1713,13 @@ api.get('/dashboard/stats', authenticate, (req: AuthRequest, res) => {
     gameBreakdown,
     cashierBreakdown,
     recentTransactions,
+    coinStats: {
+      totalAllocated: totalAllocatedCoins,
+      totalSold: totalSoldCoins,
+      totalVoided: totalVoidedCoins,
+      totalCompensated: totalCompensatedCoins,
+      totalRemaining: totalAllocatedCoins - totalSoldCoins - totalVoidedCoins - totalCompensatedCoins,
+    },
     reconciliationStatus: todayRec
       ? {
           date: todayRec.businessDate,
@@ -1900,9 +1933,433 @@ api.post('/cashiers/:id/reset-password', authenticate, requireAdmin, (req: AuthR
   res.json({ message: `Password for ${cashier.name} successfully reset.` });
 });
 
+// ==========================================================
+// 7. COIN VAULT (ALLOCATIONS, BALANCES, COMPENSATIONS)
+// ==========================================================
+// Accounting model per cashier:
+//   expectedRemaining = allocated - soldCoins - voidedCoins - compensatedCoins
+// VOIDED sales (e.g. coin stuck in machine and admin refunded the customer)
+// STILL deduct from the float, because the physical coin already left the
+// cashier's drawer. The cashier reports the incident physically or on the
+// platform (void + fix request), and the books stay balanced.
+
+// Total coins physically handed out for one transaction (any status)
+function countCoinsInTxn(t: Transaction): number {
+  let coins = 0;
+  if (Array.isArray(t.items) && t.items.length > 0) {
+    for (const it of t.items) {
+      if (it.gameCategory === 'COIN_GAME') {
+        coins += (it.coinsRequiredSnapshot || 0) * it.quantity;
+      }
+    }
+  } else if (t.gameCategory === 'COIN_GAME' && t.coinsRequiredSnapshot) {
+    coins += t.coinsRequiredSnapshot * t.quantity;
+  }
+  return coins;
+}
+
+type Db = ReturnType<typeof readDb>;
+
+function computeCoinBalance(db: Db, cashierId: string, cashierName: string, startDate?: string, endDate?: string): CashierCoinBalance {
+  const inWindow = (d: string) => (!startDate || d >= startDate) && (!endDate || d <= endDate);
+
+  const allocatedCoins = db.coinAllocations
+    .filter(a => a.cashierId === cashierId && inWindow(a.businessDate))
+    .reduce((s, a) => s + a.initialCoins, 0);
+
+  const cashierTxns = db.transactions.filter(t => t.cashierId === cashierId && inWindow(t.businessDate));
+
+  let soldCoins = 0;
+  let voidedCoins = 0;
+  for (const t of cashierTxns) {
+    const coins = countCoinsInTxn(t);
+    if (coins <= 0) continue;
+    if (t.status === 'VOIDED') voidedCoins += coins;
+    else soldCoins += coins;
+  }
+
+  const compensatedCoins = db.coinCompensations
+    .filter(c => c.cashierId === cashierId && inWindow(c.businessDate))
+    .reduce((s, c) => s + c.coinsIssued, 0);
+
+  // Most recent closed allocation in window carries the physical count snapshot
+  const closedAllocs = db.coinAllocations
+    .filter(a => a.cashierId === cashierId && a.status === 'CLOSED' && a.actualRemainingCoins !== undefined && inWindow(a.businessDate))
+    .sort((a, b) => (b.closedAt || '').localeCompare(a.closedAt || ''));
+  const lastClosed = closedAllocs[0];
+
+  const businessDate = endDate || startDate || getLagosDateString(new Date());
+
+  return {
+    cashierId,
+    cashierName,
+    businessDate,
+    allocatedCoins,
+    soldCoins,
+    voidedCoins,
+    compensatedCoins,
+    expectedRemainingCoins: allocatedCoins - soldCoins - voidedCoins - compensatedCoins,
+    actualRemainingCoins: lastClosed?.actualRemainingCoins,
+    discrepancyCoins: lastClosed?.discrepancyCoins,
+    notes: lastClosed?.closeNotes,
+  };
+}
+
+// Admin: hand a cashier a bulk float of physical coins (e.g. 200 coins)
+api.post('/coin-allocations', authenticate, requireAdmin, (req: AuthRequest, res) => {
+  const { cashierId, initialCoins, notes } = req.body;
+  const coins = parseInt(initialCoins, 10);
+
+  if (!cashierId || !Number.isFinite(coins) || coins < 1) {
+    res.status(400).json({ error: 'Select a cashier and enter a valid number of coins (minimum 1).' });
+    return;
+  }
+
+  const db = readDb();
+  const cashier = db.users.find(u => u.id === cashierId && u.role === 'CASHIER');
+  if (!cashier) {
+    res.status(404).json({ error: 'Cashier account not found.' });
+    return;
+  }
+  if (!cashier.isActive) {
+    res.status(400).json({ error: `Cannot allocate coins to deactivated cashier ${cashier.name}.` });
+    return;
+  }
+
+  const now = new Date();
+  const allocation: CoinAllocation = {
+    id: `coin_alloc_${crypto.randomUUID()}`,
+    cashierId: cashier.id,
+    cashierName: cashier.name,
+    allocatedBy: req.user!.id,
+    allocatedByName: req.user!.name,
+    initialCoins: coins,
+    notes: notes ? String(notes).trim() : undefined,
+    businessDate: getLagosDateString(now),
+    timestamp: now.toISOString(),
+    status: 'ACTIVE',
+  };
+
+  db.coinAllocations.unshift(allocation);
+  saveDb(db);
+
+  addAuditLog(
+    { id: req.user!.id, name: req.user!.name, role: req.user!.role },
+    'COIN_ALLOCATED',
+    'COIN_ALLOCATION',
+    allocation.id,
+    {
+      newValues: {
+        cashierName: cashier.name,
+        initialCoins: coins,
+        notes: allocation.notes,
+        businessDate: allocation.businessDate,
+      },
+      reason: `Bulk coin float of ${coins} coins issued to ${cashier.name}`,
+    }
+  );
+
+  res.status(201).json({ allocation });
+});
+
+api.get('/coin-allocations', authenticate, requireAdmin, (req, res) => {
+  const db = readDb();
+  let list = [...db.coinAllocations];
+
+  if (req.query.cashierId) list = list.filter(a => a.cashierId === req.query.cashierId);
+  if (req.query.startDate) list = list.filter(a => a.businessDate >= (req.query.startDate as string));
+  if (req.query.endDate) list = list.filter(a => a.businessDate <= (req.query.endDate as string));
+  if (req.query.status) list = list.filter(a => a.status === req.query.status);
+
+  res.json({ allocations: list });
+});
+
+// Live computed coin float per cashier. Cashier sees only their own.
+api.get('/coin-balances', authenticate, (req: AuthRequest, res) => {
+  const db = readDb();
+
+  const today = getLagosDateString(new Date());
+  const startDate = (req.query.startDate as string) || today;
+  const endDate = (req.query.endDate as string) || today;
+
+  const targetCashiers = req.user!.role === 'CASHIER'
+    ? db.users.filter(u => u.id === req.user!.id)
+    : db.users.filter(u => u.role === 'CASHIER');
+
+  const balances = targetCashiers.map(c => computeCoinBalance(db, c.id, c.name, startDate, endDate));
+
+  res.json({ balances, startDate, endDate });
+});
+
+// Admin: end-of-shift physical coin count — detects shortage / theft / loss
+api.post('/coin-allocations/:id/close', authenticate, requireAdmin, (req: AuthRequest, res) => {
+  const { actualRemainingCoins, notes } = req.body;
+  const actual = parseInt(actualRemainingCoins, 10);
+
+  if (!Number.isFinite(actual) || actual < 0) {
+    res.status(400).json({ error: 'Enter the physical coin count you counted (0 or more).' });
+    return;
+  }
+
+  const db = readDb();
+  const allocation = db.coinAllocations.find(a => a.id === req.params.id);
+
+  if (!allocation) {
+    res.status(404).json({ error: 'Coin allocation record not found.' });
+    return;
+  }
+  if (allocation.status === 'CLOSED') {
+    res.status(400).json({ error: 'This coin allocation has already been counted and closed.' });
+    return;
+  }
+
+  // Expected remaining computed across ALL of this cashier's allocations on
+  // the same business date, so multiple allocations in a day reconcile together.
+  const balance = computeCoinBalance(db, allocation.cashierId, allocation.cashierName, allocation.businessDate, allocation.businessDate);
+  const expected = balance.expectedRemainingCoins;
+  const discrepancy = actual - expected;
+
+  const previousValues = { status: allocation.status };
+
+  allocation.status = 'CLOSED';
+  allocation.closedAt = new Date().toISOString();
+  allocation.closedBy = req.user!.id;
+  allocation.closedByName = req.user!.name;
+  allocation.actualRemainingCoins = actual;
+  allocation.discrepancyCoins = discrepancy;
+  allocation.closeNotes = notes ? String(notes).trim() : undefined;
+
+  saveDb(db);
+
+  addAuditLog(
+    { id: req.user!.id, name: req.user!.name, role: req.user!.role },
+    'COIN_ALLOCATION_CLOSED',
+    'COIN_ALLOCATION',
+    allocation.id,
+    {
+      previousValues,
+      newValues: {
+        cashierName: allocation.cashierName,
+        allocatedCoins: allocation.initialCoins,
+        soldCoins: balance.soldCoins,
+        voidedCoins: balance.voidedCoins,
+        compensatedCoins: balance.compensatedCoins,
+        expectedRemainingCoins: expected,
+        actualRemainingCoins: actual,
+        discrepancyCoins: discrepancy,
+        closeNotes: allocation.closeNotes,
+      },
+      reason: discrepancy < 0
+        ? `Physical count SHORT by ${Math.abs(discrepancy)} coin(s) — possible theft, loss or miscount`
+        : discrepancy > 0
+        ? `Physical count OVER by ${discrepancy} coin(s) — verify float`
+        : 'Coin float perfectly balanced',
+    }
+  );
+
+  res.json({ allocation, expectedRemainingCoins: expected, discrepancyCoins: discrepancy });
+});
+
+// Admin or Cashier (self): report a lost/compensated coin (power outage, machine fault)
+api.post('/coin-compensations', authenticate, (req: AuthRequest, res) => {
+  const { cashierId, customerName, gameId, gameName, coinsIssued, reason, notes } = req.body;
+  const coins = parseInt(coinsIssued, 10);
+
+  if (!customerName || !String(customerName).trim()) {
+    res.status(400).json({ error: 'Customer name is required so the replacement can be traced to a player.' });
+    return;
+  }
+  if (!gameName || !String(gameName).trim()) {
+    res.status(400).json({ error: 'Game name is required (the game the customer was playing when the coin was lost).' });
+    return;
+  }
+  if (!Number.isFinite(coins) || coins < 1 || coins > 50) {
+    res.status(400).json({ error: 'Number of replacement coins must be between 1 and 50.' });
+    return;
+  }
+  if (!reason || String(reason).trim().length < 4) {
+    res.status(400).json({ error: 'Explain what happened (e.g. "Power outage mid-game, coin lost in machine").' });
+    return;
+  }
+
+  const db = readDb();
+
+  // Cashiers can only report for themselves; admins can report for any cashier
+  let targetCashierId = req.user!.id;
+  if (req.user!.role === 'ADMIN' && cashierId) {
+    targetCashierId = cashierId;
+  }
+
+  const cashier = db.users.find(u => u.id === targetCashierId && u.role === 'CASHIER');
+  if (!cashier) {
+    res.status(404).json({ error: 'Cashier account not found.' });
+    return;
+  }
+
+  const now = new Date();
+  const compensation: CoinCompensation = {
+    id: `coin_comp_${crypto.randomUUID()}`,
+    cashierId: cashier.id,
+    cashierName: cashier.name,
+    customerName: String(customerName).trim(),
+    gameId: gameId ? String(gameId) : undefined,
+    gameName: String(gameName).trim(),
+    coinsIssued: coins,
+    reason: String(reason).trim(),
+    notes: notes ? String(notes).trim() : undefined,
+    businessDate: getLagosDateString(now),
+    timestamp: now.toISOString(),
+  };
+
+  db.coinCompensations.unshift(compensation);
+  saveDb(db);
+
+  addAuditLog(
+    { id: req.user!.id, name: req.user!.name, role: req.user!.role },
+    'COIN_COMPENSATION_RECORDED',
+    'COIN_COMPENSATION',
+    compensation.id,
+    {
+      newValues: {
+        cashierName: cashier.name,
+        customerName: compensation.customerName,
+        gameName: compensation.gameName,
+        coinsIssued: coins,
+        reason: compensation.reason,
+        notes: compensation.notes,
+        businessDate: compensation.businessDate,
+      },
+      reason: `${coins} replacement coin(s) issued free to customer — deducted from ${cashier.name}'s float`,
+    }
+  );
+
+  res.status(201).json({ compensation });
+});
+
+api.get('/coin-compensations', authenticate, (req: AuthRequest, res) => {
+  const db = readDb();
+  let list = [...db.coinCompensations];
+
+  if (req.user!.role === 'CASHIER') {
+    list = list.filter(c => c.cashierId === req.user!.id);
+  } else if (req.query.cashierId) {
+    list = list.filter(c => c.cashierId === req.query.cashierId);
+  }
+  if (req.query.startDate) list = list.filter(c => c.businessDate >= (req.query.startDate as string));
+  if (req.query.endDate) list = list.filter(c => c.businessDate <= (req.query.endDate as string));
+
+  res.json({ compensations: list });
+});
+
+// ==========================================================
+// 8. BANK TRANSFER ACCOUNTS (UP TO 3 SLOTS)
+// ==========================================================
+
+// Both roles: cashiers need these to show customers for transfers
+api.get('/bank-accounts', authenticate, (req, res) => {
+  const db = readDb();
+  const accounts = [...db.bankAccounts].sort((a, b) => a.slotNumber - b.slotNumber);
+  res.json({ accounts });
+});
+
+// Admin: create or edit any slot anytime
+api.put('/bank-accounts/:slot', authenticate, requireAdmin, (req: AuthRequest, res) => {
+  const slot = parseInt(req.params.slot, 10);
+  if (![1, 2, 3].includes(slot)) {
+    res.status(400).json({ error: 'Only 3 bank account slots are supported (1, 2 or 3).' });
+    return;
+  }
+
+  const { bankName, accountNumber, accountName, label, isActive } = req.body;
+
+  if (!bankName || !String(bankName).trim()) {
+    res.status(400).json({ error: 'Bank name is required.' });
+    return;
+  }
+  const cleanAcctNo = String(accountNumber || '').replace(/\s+/g, '');
+  if (!/^\d{6,14}$/.test(cleanAcctNo)) {
+    res.status(400).json({ error: 'Account number must be 6–14 digits.' });
+    return;
+  }
+  if (!accountName || !String(accountName).trim()) {
+    res.status(400).json({ error: 'Account holder name is required.' });
+    return;
+  }
+
+  const db = readDb();
+  const existing = db.bankAccounts.find(a => a.slotNumber === slot);
+  const previousValues = existing
+    ? {
+        bankName: existing.bankName,
+        accountNumber: existing.accountNumber,
+        accountName: existing.accountName,
+        label: existing.label,
+        isActive: existing.isActive,
+      }
+    : undefined;
+
+  const now = new Date().toISOString();
+  let record: BankAccount;
+
+  if (existing) {
+    existing.bankName = String(bankName).trim();
+    existing.accountNumber = cleanAcctNo;
+    existing.accountName = String(accountName).trim();
+    existing.label = label !== undefined ? String(label).trim() || undefined : existing.label;
+    existing.isActive = typeof isActive === 'boolean' ? isActive : existing.isActive;
+    existing.updatedBy = req.user!.id;
+    existing.updatedByName = req.user!.name;
+    existing.updatedAt = now;
+    record = existing;
+  } else {
+    record = {
+      id: `bank_acct_slot_${slot}`,
+      slotNumber: slot as 1 | 2 | 3,
+      bankName: String(bankName).trim(),
+      accountNumber: cleanAcctNo,
+      accountName: String(accountName).trim(),
+      label: label ? String(label).trim() : undefined,
+      isActive: typeof isActive === 'boolean' ? isActive : true,
+      updatedBy: req.user!.id,
+      updatedByName: req.user!.name,
+      updatedAt: now,
+    };
+    db.bankAccounts.push(record);
+  }
+
+  saveDb(db);
+
+  addAuditLog(
+    { id: req.user!.id, name: req.user!.name, role: req.user!.role },
+    'BANK_ACCOUNT_UPDATED',
+    'BANK_ACCOUNT',
+    record.id,
+    {
+      previousValues,
+      newValues: {
+        slotNumber: record.slotNumber,
+        bankName: record.bankName,
+        accountNumber: record.accountNumber,
+        accountName: record.accountName,
+        label: record.label,
+        isActive: record.isActive,
+      },
+      reason: previousValues
+        ? `Bank transfer account slot ${slot} edited for customer transfers`
+        : `Bank transfer account slot ${slot} created for customer transfers`,
+    }
+  );
+
+  res.json({ account: record });
+});
+
 // ==========================================
-// 7. AUDIT LOGS
+// 9. AUDIT LOGS
 // ==========================================
+// IMMUTABILITY RULE: Audit logs are append-only by design. There must NEVER
+// be a DELETE or PATCH route for audit logs — historical records (sales,
+// voids, coin allocations, bank account edits, etc.) must survive forever
+// so shortage/theft investigations cannot be covered up.
 
 api.get('/audit-logs', authenticate, requireAdmin, (req, res) => {
   const db = readDb();

@@ -16,7 +16,8 @@ import {
   Users,
   Trophy,
   ArrowRight,
-  Filter
+  Filter,
+  Coins
 } from 'lucide-react';
 
 interface DashboardViewProps {
@@ -288,6 +289,47 @@ export function DashboardView({
           </div>
         </div>
       </div>
+
+      {/* Coin Float Accountability Strip */}
+      {stats?.coinStats && (
+        <div className="bg-slate-900 border border-amber-800/40 rounded-2xl p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold uppercase tracking-wider text-amber-300 flex items-center gap-2">
+              <Coins className="w-4 h-4 text-amber-400" />
+              Coin Float Accountability
+            </h3>
+            {stats.coinStats.totalRemaining < 0 && (
+              <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-red-500/15 text-red-400 border border-red-500/30 flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3" /> Net Shortage
+              </span>
+            )}
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+            <div className="text-center">
+              <span className="text-[10px] uppercase tracking-wider text-slate-400 block mb-1">Allocated</span>
+              <span className="text-xl font-bold font-mono text-white">{stats.coinStats.totalAllocated}</span>
+            </div>
+            <div className="text-center">
+              <span className="text-[10px] uppercase tracking-wider text-slate-400 block mb-1">Sold</span>
+              <span className="text-xl font-bold font-mono text-emerald-400">{stats.coinStats.totalSold}</span>
+            </div>
+            <div className="text-center">
+              <span className="text-[10px] uppercase tracking-wider text-slate-400 block mb-1">Lost (voided)</span>
+              <span className="text-xl font-bold font-mono text-orange-400">{stats.coinStats.totalVoided}</span>
+            </div>
+            <div className="text-center">
+              <span className="text-[10px] uppercase tracking-wider text-slate-400 block mb-1">Compensated</span>
+              <span className="text-xl font-bold font-mono text-amber-400">{stats.coinStats.totalCompensated}</span>
+            </div>
+            <div className="text-center">
+              <span className="text-[10px] uppercase tracking-wider text-slate-400 block mb-1">Expected Remaining</span>
+              <span className={`text-xl font-bold font-mono ${stats.coinStats.totalRemaining < 0 ? 'text-red-400' : 'text-white'}`}>
+                {stats.coinStats.totalRemaining}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Breakdown Rows: Categories & Games Leaderboard */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

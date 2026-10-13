@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Game, PaymentMethod, Transaction, GameCategory, CustomerTab } from '../types/index.ts';
+import { Game, PaymentMethod, Transaction, GameCategory, CustomerTab, BankAccount } from '../types/index.ts';
 import { api } from '../lib/api.ts';
 import { useAuth } from '../context/AuthContext.tsx';
 import { formatNaira, formatLagosDateTime } from '../lib/utils.ts';
@@ -28,7 +28,9 @@ import {
   ArrowRight,
   Layers,
   Save,
-  HelpCircle
+  HelpCircle,
+  Landmark,
+  Copy
 } from 'lucide-react';
 
 interface CartItem {
@@ -89,11 +91,36 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
   const [showAllTabsModal, setShowAllTabsModal] = useState<boolean>(false);
   const [tabFilterSearch, setTabFilterSearch] = useState<string>('');
 
+  // Bank transfer accounts (shown to customers for transfers)
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+
   useEffect(() => {
     loadGames();
     loadActiveTabs();
     loadCashierShiftStats();
+    loadBankAccounts();
   }, []);
+
+  const loadBankAccounts = async () => {
+    try {
+      const res = await api.bankAccounts.list();
+      setBankAccounts(res.accounts.filter(a => a.isActive));
+    } catch (err) {
+      console.error('Failed to load bank accounts:', err);
+    }
+  };
+
+  const handleCopyAccountNumber = (acctNo: string) => {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(acctNo).then(() => {
+        showToast(`Account number ${acctNo} copied — show it to the customer.`);
+      }).catch(() => {
+        showToast(`Account number: ${acctNo}`);
+      });
+    } else {
+      showToast(`Account number: ${acctNo}`);
+    }
+  };
 
   const loadGames = async () => {
     try {
@@ -909,6 +936,49 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
                           className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:border-violet-400 outline-none"
                         />
                       </div>
+
+                      {/* Bank accounts to show the customer */}
+                      {bankAccounts.length > 0 && (
+                        <div className="pt-2 border-t border-violet-800/40">
+                          <div className="flex items-center gap-1.5 mb-2">
+                            <Landmark className="w-3.5 h-3.5 text-violet-300" />
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-violet-200">
+                              Show the customer these accounts
+                            </span>
+                          </div>
+                          <div className="space-y-2">
+                            {bankAccounts.map(acc => (
+                              <div
+                                key={acc.id}
+                                className="flex items-center justify-between gap-2 bg-slate-950 border border-violet-900/50 rounded-lg px-3 py-2"
+                              >
+                                <div className="min-w-0">
+                                  <div className="text-xs font-semibold text-white truncate">
+                                    {acc.bankName}
+                                    {acc.label && <span className="text-[10px] text-violet-300 ml-1.5">({acc.label})</span>}
+                                  </div>
+                                  <div className="text-[11px] text-slate-400 font-mono truncate">
+                                    {acc.accountNumber} · {acc.accountName}
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyAccountNumber(acc.accountNumber)}
+                                  className="shrink-0 p-1.5 rounded-lg bg-violet-600/20 hover:bg-violet-600/40 text-violet-200 transition cursor-pointer"
+                                  title="Copy account number"
+                                >
+                                  <Copy className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {bankAccounts.length === 0 && (
+                        <div className="pt-2 border-t border-violet-800/40 text-[11px] text-violet-300/70">
+                          No bank accounts configured yet — ask the admin to add them under "Transfer Accounts".
+                        </div>
+                      )}
                     </div>
                   )}
 

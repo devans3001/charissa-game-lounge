@@ -14,7 +14,9 @@ import {
   PlusCircle,
   FileQuestion,
   User,
-  KeyRound
+  KeyRound,
+  Coins,
+  Landmark
 } from 'lucide-react';
 
 export type ActiveTab =
@@ -24,6 +26,8 @@ export type ActiveTab =
   | 'reconciliation'
   | 'games'
   | 'cashiers'
+  | 'coinvault'
+  | 'bank_accounts'
   | 'correction_requests'
   | 'audit';
 
@@ -46,6 +50,8 @@ export function Navigation({ activeTab, onSelectTab, children }: NavigationProps
         { id: 'newsale' as ActiveTab, label: 'New Sale (POS)', icon: PlusCircle },
         { id: 'transactions' as ActiveTab, label: 'All Transactions', icon: Receipt },
         { id: 'reconciliation' as ActiveTab, label: 'Daily Reconciliation', icon: Scale },
+        { id: 'coinvault' as ActiveTab, label: 'Coin Vault', icon: Coins },
+        { id: 'bank_accounts' as ActiveTab, label: 'Transfer Accounts', icon: Landmark },
         { id: 'games' as ActiveTab, label: 'Games & Pricing', icon: Gamepad2 },
         { id: 'cashiers' as ActiveTab, label: 'Cashier Accounts', icon: Users },
         { id: 'correction_requests' as ActiveTab, label: 'Fix Requests', icon: FileQuestion },
@@ -53,6 +59,7 @@ export function Navigation({ activeTab, onSelectTab, children }: NavigationProps
       ]
     : [
         { id: 'newsale' as ActiveTab, label: 'New Sale (POS)', icon: PlusCircle },
+        { id: 'coinvault' as ActiveTab, label: 'My Coin Float', icon: Coins },
         { id: 'transactions' as ActiveTab, label: 'My Transactions', icon: Receipt },
         { id: 'dashboard' as ActiveTab, label: 'My Shift Overview', icon: LayoutDashboard },
         { id: 'correction_requests' as ActiveTab, label: 'My Fix Requests', icon: FileQuestion },

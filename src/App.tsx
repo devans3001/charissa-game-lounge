@@ -10,6 +10,8 @@ import { GameManagementView } from './components/GameManagementView.tsx';
 import { CashierManagementView } from './components/CashierManagementView.tsx';
 import { AuditLogsView } from './components/AuditLogsView.tsx';
 import { CorrectionRequestsView } from './components/CorrectionRequestsView.tsx';
+import { CoinVaultView } from './components/CoinVaultView.tsx';
+import { BankAccountsView } from './components/BankAccountsView.tsx';
 
 function MainApp() {
   const { user, isLoading } = useAuth();
@@ -55,6 +57,8 @@ function MainApp() {
       {activeTab === 'reconciliation' && (isAdmin ? <ReconciliationView /> : <DashboardView />)}
       {activeTab === 'games' && (isAdmin ? <GameManagementView /> : <NewSaleView />)}
       {activeTab === 'cashiers' && (isAdmin ? <CashierManagementView /> : <DashboardView />)}
+      {activeTab === 'coinvault' && <CoinVaultView />}
+      {activeTab === 'bank_accounts' && (isAdmin ? <BankAccountsView /> : <DashboardView />)}
       {activeTab === 'correction_requests' && <CorrectionRequestsView />}
       {activeTab === 'audit' && (isAdmin ? <AuditLogsView /> : <DashboardView />)}
     </Navigation>

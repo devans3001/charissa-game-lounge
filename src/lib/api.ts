@@ -7,6 +7,10 @@ import {
   DailyReconciliation,
   CorrectionRequest,
   AuditLog,
+  CoinAllocation,
+  CoinCompensation,
+  CashierCoinBalance,
+  BankAccount,
   DashboardStats,
   PaymentMethod,
   GameCategory,
@@ -342,5 +346,81 @@ export const api = {
         totalPages: number;
       }>(`/api/audit-logs?${query.toString()}`);
     },
+  },
+
+  coins: {
+    allocations: {
+      list: (params: { cashierId?: string; startDate?: string; endDate?: string; status?: string } = {}) => {
+        const query = new URLSearchParams();
+        Object.entries(params).forEach(([k, v]) => {
+          if (v !== undefined && v !== '') query.append(k, String(v));
+        });
+        const qs = query.toString();
+        return request<{ allocations: CoinAllocation[] }>(`/api/coin-allocations${qs ? `?${qs}` : ''}`);
+      },
+      create: (data: { cashierId: string; initialCoins: number; notes?: string }) =>
+        request<{ allocation: CoinAllocation }>('/api/coin-allocations', {
+          method: 'POST',
+          body: JSON.stringify(data),
+        }),
+      close: (id: string, data: { actualRemainingCoins: number; notes?: string }) =>
+        request<{ allocation: CoinAllocation; expectedRemainingCoins: number; discrepancyCoins: number }>(
+          `/api/coin-allocations/${id}/close`,
+          {
+            method: 'POST',
+            body: JSON.stringify(data),
+          }
+        ),
+    },
+    balances: (params: { startDate?: string; endDate?: string } = {}) => {
+      const query = new URLSearchParams();
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== '') query.append(k, String(v));
+      });
+      return request<{ balances: CashierCoinBalance[]; startDate: string; endDate: string }>(
+        `/api/coin-balances?${query.toString()}`
+      );
+    },
+    compensations: {
+      list: (params: { cashierId?: string; startDate?: string; endDate?: string } = {}) => {
+        const query = new URLSearchParams();
+        Object.entries(params).forEach(([k, v]) => {
+          if (v !== undefined && v !== '') query.append(k, String(v));
+        });
+        const qs = query.toString();
+        return request<{ compensations: CoinCompensation[] }>(`/api/coin-compensations${qs ? `?${qs}` : ''}`);
+      },
+      create: (data: {
+        cashierId?: string;
+        customerName: string;
+        gameId?: string;
+        gameName: string;
+        coinsIssued: number;
+        reason: string;
+        notes?: string;
+      }) =>
+        request<{ compensation: CoinCompensation }>('/api/coin-compensations', {
+          method: 'POST',
+          body: JSON.stringify(data),
+        }),
+    },
+  },
+
+  bankAccounts: {
+    list: () => request<{ accounts: BankAccount[] }>('/api/bank-accounts'),
+    updateSlot: (
+      slot: 1 | 2 | 3,
+      data: {
+        bankName: string;
+        accountNumber: string;
+        accountName: string;
+        label?: string;
+        isActive?: boolean;
+      }
+    ) =>
+      request<{ account: BankAccount }>(`/api/bank-accounts/${slot}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
   },
 };

@@ -200,6 +200,13 @@ export interface CoinAllocation {
   businessDate: string;
   timestamp: string;
   status: 'ACTIVE' | 'CLOSED';
+  // Populated when admin performs the end-of-shift physical coin count
+  closedAt?: string;
+  closedBy?: string;
+  closedByName?: string;
+  actualRemainingCoins?: number;
+  discrepancyCoins?: number; // actual - expected (negative = shortage/theft/loss)
+  closeNotes?: string;
 }
 
 export interface CoinCompensation {
@@ -221,9 +228,10 @@ export interface CashierCoinBalance {
   cashierName: string;
   businessDate: string;
   allocatedCoins: number;
-  soldCoins: number;
-  compensatedCoins: number;
-  expectedRemainingCoins: number;
+  soldCoins: number;           // coins consumed by non-voided COIN_GAME sales
+  voidedCoins: number;         // coins consumed by VOIDED sales (e.g. coin stuck in machine) — still deducted from float
+  compensatedCoins: number;    // replacement coins issued free (power outage etc.)
+  expectedRemainingCoins: number; // allocated - sold - voided - compensated
   actualRemainingCoins?: number;
   discrepancyCoins?: number;
   notes?: string;
@@ -273,6 +281,7 @@ export interface DashboardStats {
   coinStats?: {
     totalAllocated: number;
     totalSold: number;
+    totalVoided: number;
     totalCompensated: number;
     totalRemaining: number;
   };
