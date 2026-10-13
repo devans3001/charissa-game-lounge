@@ -108,7 +108,9 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
   const loadBankAccounts = async () => {
     try {
       const res = await api.bankAccounts.list();
-      setBankAccounts(res.accounts.filter(a => a.isActive));
+      // Treat a missing isActive field as visible (half-written docs must
+      // never hide configured accounts from the cashier's checkout screen)
+      setBankAccounts(res.accounts.filter(a => a.isActive !== false));
     } catch (err) {
       console.error('Failed to load bank accounts:', err);
     }

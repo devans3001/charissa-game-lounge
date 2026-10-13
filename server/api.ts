@@ -5,6 +5,8 @@ import {
   readDb,
   saveDb,
   addAuditLog,
+  allocateReceiptSeq,
+  allocateTabSeq,
   getLagosDateString,
   getLagosIsoString,
 } from './db.ts';
@@ -33,18 +35,47 @@ import {
 
 const api = Router();
 
+// Express 4 does not catch rejected promises from async route handlers.
+// This guard wraps every registered handler so any thrown/rejected error
+// returns a clean 500 (or flows to the error middleware) instead of
+// hanging the request forever.
+for (const method of ['get', 'post', 'put', 'delete', 'patch'] as const) {
+  const original = (api as any)[method].bind(api);
+  (api as any)[method] = (path: string, ...handlers: any[]) => {
+    const wrapped = handlers.map((h) => {
+      if (typeof h !== 'function') return h;
+      return (...args: any[]) => {
+        const res = args[1];
+        const next = args[2];
+        const fail = (err: any) => {
+          console.error(`[API] ${method.toUpperCase()} ${path} failed:`, err?.stack || err);
+          if (typeof next === 'function') next(err);
+          else if (res && !res.headersSent) res.status(500).json({ error: 'Internal server error' });
+        };
+        try {
+          const result = h(...args);
+          if (result && typeof result.catch === 'function') result.catch(fail);
+        } catch (err) {
+          fail(err);
+        }
+      };
+    });
+    return original(path, ...wrapped);
+  };
+}
+
 // ==========================================
 // 1. AUTHENTICATION & SETUP
 // ==========================================
 
-api.post('/auth/login', (req, res) => {
+api.post('/auth/login', async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
     res.status(400).json({ error: 'Username and password are required' });
     return;
   }
 
-  const db = readDb();
+  const db = await readDb();
   const cleanInput = username.trim().toLowerCase();
   const digitsOnly = cleanInput.replace(/[^0-9]/g, '');
 
@@ -101,7 +132,7 @@ api.post('/auth/login', (req, res) => {
 
   // Update last login
   user.lastLoginAt = new Date().toISOString();
-  saveDb(db);
+  await saveDb(db);
 
   const safeUser = {
     id: user.id,
@@ -120,12 +151,12 @@ api.post('/auth/login', (req, res) => {
   res.json({ token, user: safeUser });
 });
 
-api.get('/auth/me', authenticate, (req: AuthRequest, res) => {
+api.get('/auth/me', authenticate, async (req: AuthRequest, res) => {
   res.json({ user: req.user });
 });
 
 // Change Password endpoint for authenticated user
-api.post('/auth/change-password', authenticate, (req: AuthRequest, res) => {
+api.post('/auth/change-password', authenticate, async (req: AuthRequest, res) => {
   const { currentPassword, newPassword } = req.body;
 
   if (!newPassword || newPassword.length < 6) {
@@ -133,7 +164,7 @@ api.post('/auth/change-password', authenticate, (req: AuthRequest, res) => {
     return;
   }
 
-  const db = readDb();
+  const db = await readDb();
   const user = db.users.find(u => u.id === req.user!.id);
 
   if (!user) {
@@ -166,9 +197,9 @@ api.post('/auth/change-password', authenticate, (req: AuthRequest, res) => {
   const salt = bcrypt.genSaltSync(10);
   user.passwordHash = bcrypt.hashSync(newPassword, salt);
   user.mustChangePassword = false;
-  saveDb(db);
+  await saveDb(db);
 
-  addAuditLog(
+  await addAuditLog(
     { id: user.id, name: user.name, role: user.role },
     'PASSWORD_CHANGED',
     'USER',
@@ -193,8 +224,8 @@ api.post('/auth/change-password', authenticate, (req: AuthRequest, res) => {
 });
 
 // Setup first administrator if system has no users
-api.post('/auth/setup-admin', (req, res) => {
-  const db = readDb();
+api.post('/auth/setup-admin', async (req, res) => {
+  const db = await readDb();
   if (db.users.length > 0) {
     res.status(400).json({ error: 'System is already initialized with administrator accounts.' });
     return;
@@ -224,9 +255,9 @@ api.post('/auth/setup-admin', (req, res) => {
   };
 
   db.users.push(admin);
-  saveDb(db);
+  await saveDb(db);
 
-  addAuditLog(
+  await addAuditLog(
     { id: adminId, name, role: 'ADMIN' },
     'ADMIN_INITIALIZED',
     'USER',
@@ -253,8 +284,8 @@ api.post('/auth/setup-admin', (req, res) => {
 // 2. GAMES & PRICING MANAGEMENT
 // ==========================================
 
-api.get('/games', authenticate, (req: AuthRequest, res) => {
-  const db = readDb();
+api.get('/games', authenticate, async (req: AuthRequest, res) => {
+  const db = await readDb();
   const showAll = req.query.all === 'true' && req.user?.role === 'ADMIN';
 
   const games = showAll
@@ -264,7 +295,7 @@ api.get('/games', authenticate, (req: AuthRequest, res) => {
   res.json({ games });
 });
 
-api.post('/games', authenticate, requireAdmin, (req: AuthRequest, res) => {
+api.post('/games', authenticate, requireAdmin, async (req: AuthRequest, res) => {
   const {
     name,
     category,
@@ -300,7 +331,7 @@ api.post('/games', authenticate, requireAdmin, (req: AuthRequest, res) => {
   }
 
   const now = new Date().toISOString();
-  const db = readDb();
+  const db = await readDb();
   const gameId = `game_${category.toLowerCase()}_${Date.now()}`;
 
   const newGame: Game = {
@@ -320,9 +351,9 @@ api.post('/games', authenticate, requireAdmin, (req: AuthRequest, res) => {
   };
 
   db.games.push(newGame);
-  saveDb(db);
+  await saveDb(db);
 
-  addAuditLog(
+  await addAuditLog(
     { id: req.user!.id, name: req.user!.name, role: req.user!.role },
     'GAME_CREATED',
     'GAME',
@@ -341,9 +372,9 @@ api.post('/games', authenticate, requireAdmin, (req: AuthRequest, res) => {
   res.status(201).json({ game: newGame });
 });
 
-api.put('/games/:id', authenticate, requireAdmin, (req: AuthRequest, res) => {
+api.put('/games/:id', authenticate, requireAdmin, async (req: AuthRequest, res) => {
   const { id } = req.params;
-  const db = readDb();
+  const db = await readDb();
   const gameIndex = db.games.findIndex(g => g.id === id);
 
   if (gameIndex === -1) {
@@ -383,11 +414,11 @@ api.put('/games/:id', authenticate, requireAdmin, (req: AuthRequest, res) => {
   currentGame.updatedBy = req.user!.id;
   currentGame.updatedAt = new Date().toISOString();
 
-  saveDb(db);
+  await saveDb(db);
 
   const priceChanged = previousValues.calculatedPriceKobo !== currentGame.calculatedPriceKobo;
 
-  addAuditLog(
+  await addAuditLog(
     { id: req.user!.id, name: req.user!.name, role: req.user!.role },
     priceChanged ? 'GAME_PRICE_CHANGED' : 'GAME_UPDATED',
     'GAME',
@@ -414,7 +445,7 @@ api.put('/games/:id', authenticate, requireAdmin, (req: AuthRequest, res) => {
   res.json({ game: currentGame });
 });
 
-api.patch('/games/:id/status', authenticate, requireAdmin, (req: AuthRequest, res) => {
+api.patch('/games/:id/status', authenticate, requireAdmin, async (req: AuthRequest, res) => {
   const { id } = req.params;
   const { isActive } = req.body;
 
@@ -423,7 +454,7 @@ api.patch('/games/:id/status', authenticate, requireAdmin, (req: AuthRequest, re
     return;
   }
 
-  const db = readDb();
+  const db = await readDb();
   const game = db.games.find(g => g.id === id);
 
   if (!game) {
@@ -435,9 +466,9 @@ api.patch('/games/:id/status', authenticate, requireAdmin, (req: AuthRequest, re
   game.isActive = isActive;
   game.updatedBy = req.user!.id;
   game.updatedAt = new Date().toISOString();
-  saveDb(db);
+  await saveDb(db);
 
-  addAuditLog(
+  await addAuditLog(
     { id: req.user!.id, name: req.user!.name, role: req.user!.role },
     'GAME_STATUS_CHANGED',
     'GAME',
@@ -456,7 +487,7 @@ api.patch('/games/:id/status', authenticate, requireAdmin, (req: AuthRequest, re
 // 3. TRANSACTIONS
 // ==========================================
 
-api.post('/transactions', authenticate, (req: AuthRequest, res) => {
+api.post('/transactions', authenticate, async (req: AuthRequest, res) => {
   const { gameId, paymentMethod, paymentReference, senderName, quantity = 1, customerName, items } = req.body;
 
   const validMethods: PaymentMethod[] = ['CASH', 'POS', 'BANK_TRANSFER'];
@@ -473,7 +504,7 @@ api.post('/transactions', authenticate, (req: AuthRequest, res) => {
     }
   }
 
-  const db = readDb();
+  const db = await readDb();
   let transactionItems: TransactionItem[] = [];
   let totalAmountKobo = 0;
   let summaryGameId = '';
@@ -572,8 +603,7 @@ api.post('/transactions', authenticate, (req: AuthRequest, res) => {
   const now = new Date();
   const businessDate = getLagosDateString(now);
 
-  db.meta.lastReceiptSeq = (db.meta.lastReceiptSeq || 1000) + 1;
-  const seq = db.meta.lastReceiptSeq;
+  const seq = await allocateReceiptSeq();
   const receiptNumber = `GL-${businessDate.replace(/-/g, '')}-${seq}`;
   const transactionId = `txn_${crypto.randomUUID()}`;
 
@@ -602,9 +632,9 @@ api.post('/transactions', authenticate, (req: AuthRequest, res) => {
   };
 
   db.transactions.unshift(newTxn);
-  saveDb(db);
+  await saveDb(db);
 
-  addAuditLog(
+  await addAuditLog(
     { id: req.user!.id, name: req.user!.name, role: req.user!.role },
     'TRANSACTION_RECORDED',
     'TRANSACTION',
@@ -626,8 +656,8 @@ api.post('/transactions', authenticate, (req: AuthRequest, res) => {
   res.status(201).json({ transaction: newTxn });
 });
 
-api.get('/transactions', authenticate, (req: AuthRequest, res) => {
-  const db = readDb();
+api.get('/transactions', authenticate, async (req: AuthRequest, res) => {
+  const db = await readDb();
   let list = [...db.transactions];
 
   // Cashiers can only view their own transactions
@@ -711,8 +741,8 @@ api.get('/transactions', authenticate, (req: AuthRequest, res) => {
   });
 });
 
-api.get('/transactions/:id', authenticate, (req: AuthRequest, res) => {
-  const db = readDb();
+api.get('/transactions/:id', authenticate, async (req: AuthRequest, res) => {
+  const db = await readDb();
   const txn = db.transactions.find(t => t.id === req.params.id);
 
   if (!txn) {
@@ -729,14 +759,14 @@ api.get('/transactions/:id', authenticate, (req: AuthRequest, res) => {
 });
 
 // Admin-only Void transaction
-api.post('/transactions/:id/void', authenticate, requireAdmin, (req: AuthRequest, res) => {
+api.post('/transactions/:id/void', authenticate, requireAdmin, async (req: AuthRequest, res) => {
   const { reason } = req.body;
   if (!reason || reason.trim().length < 4) {
     res.status(400).json({ error: 'A specific explanation/reason is required to void a financial transaction.' });
     return;
   }
 
-  const db = readDb();
+  const db = await readDb();
   const txn = db.transactions.find(t => t.id === req.params.id);
 
   if (!txn) {
@@ -756,9 +786,9 @@ api.post('/transactions/:id/void', authenticate, requireAdmin, (req: AuthRequest
   txn.voidedByName = req.user!.name;
   txn.voidedAt = new Date().toISOString();
 
-  saveDb(db);
+  await saveDb(db);
 
-  addAuditLog(
+  await addAuditLog(
     { id: req.user!.id, name: req.user!.name, role: req.user!.role },
     'TRANSACTION_VOIDED',
     'TRANSACTION',
@@ -774,7 +804,7 @@ api.post('/transactions/:id/void', authenticate, requireAdmin, (req: AuthRequest
 });
 
 // Admin-only Correct transaction
-api.post('/transactions/:id/correct', authenticate, requireAdmin, (req: AuthRequest, res) => {
+api.post('/transactions/:id/correct', authenticate, requireAdmin, async (req: AuthRequest, res) => {
   const { reason, paymentMethod, paymentReference } = req.body;
 
   if (!reason || reason.trim().length < 4) {
@@ -788,7 +818,7 @@ api.post('/transactions/:id/correct', authenticate, requireAdmin, (req: AuthRequ
     return;
   }
 
-  const db = readDb();
+  const db = await readDb();
   const txn = db.transactions.find(t => t.id === req.params.id);
 
   if (!txn) {
@@ -816,9 +846,9 @@ api.post('/transactions/:id/correct', authenticate, requireAdmin, (req: AuthRequ
   txn.correctedByName = req.user!.name;
   txn.correctedAt = new Date().toISOString();
 
-  saveDb(db);
+  await saveDb(db);
 
-  addAuditLog(
+  await addAuditLog(
     { id: req.user!.id, name: req.user!.name, role: req.user!.role },
     'TRANSACTION_CORRECTED',
     'TRANSACTION',
@@ -838,7 +868,7 @@ api.post('/transactions/:id/correct', authenticate, requireAdmin, (req: AuthRequ
 });
 
 // Cashier request correction workflow
-api.post('/transactions/:id/request-correction', authenticate, (req: AuthRequest, res) => {
+api.post('/transactions/:id/request-correction', authenticate, async (req: AuthRequest, res) => {
   const { reason, requestedAction = 'VOID', proposedPaymentMethod } = req.body;
 
   if (!reason || reason.trim().length < 4) {
@@ -846,7 +876,7 @@ api.post('/transactions/:id/request-correction', authenticate, (req: AuthRequest
     return;
   }
 
-  const db = readDb();
+  const db = await readDb();
   const txn = db.transactions.find(t => t.id === req.params.id);
 
   if (!txn) {
@@ -877,9 +907,9 @@ api.post('/transactions/:id/request-correction', authenticate, (req: AuthRequest
   };
 
   db.correctionRequests.unshift(request);
-  saveDb(db);
+  await saveDb(db);
 
-  addAuditLog(
+  await addAuditLog(
     { id: req.user!.id, name: req.user!.name, role: req.user!.role },
     'CORRECTION_REQUESTED',
     'CORRECTION_REQUEST',
@@ -896,8 +926,8 @@ api.post('/transactions/:id/request-correction', authenticate, (req: AuthRequest
   res.status(201).json({ request });
 });
 
-api.get('/correction-requests', authenticate, (req: AuthRequest, res) => {
-  const db = readDb();
+api.get('/correction-requests', authenticate, async (req: AuthRequest, res) => {
+  const db = await readDb();
   let list = db.correctionRequests;
 
   if (req.user!.role === 'CASHIER') {
@@ -907,7 +937,7 @@ api.get('/correction-requests', authenticate, (req: AuthRequest, res) => {
   res.json({ requests: list });
 });
 
-api.post('/correction-requests/:id/review', authenticate, requireAdmin, (req: AuthRequest, res) => {
+api.post('/correction-requests/:id/review', authenticate, requireAdmin, async (req: AuthRequest, res) => {
   const { action, adminNotes } = req.body; // action: 'APPROVE' | 'REJECT'
 
   if (action !== 'APPROVE' && action !== 'REJECT') {
@@ -915,7 +945,7 @@ api.post('/correction-requests/:id/review', authenticate, requireAdmin, (req: Au
     return;
   }
 
-  const db = readDb();
+  const db = await readDb();
   const request = db.correctionRequests.find(r => r.id === req.params.id);
 
   if (!request) {
@@ -955,9 +985,9 @@ api.post('/correction-requests/:id/review', authenticate, requireAdmin, (req: Au
     }
   }
 
-  saveDb(db);
+  await saveDb(db);
 
-  addAuditLog(
+  await addAuditLog(
     { id: req.user!.id, name: req.user!.name, role: req.user!.role },
     action === 'APPROVE' ? 'CORRECTION_REQUEST_APPROVED' : 'CORRECTION_REQUEST_REJECTED',
     'CORRECTION_REQUEST',
@@ -979,8 +1009,8 @@ api.post('/correction-requests/:id/review', authenticate, requireAdmin, (req: Au
 // ==========================================
 
 // Get all customer tabs (filtered by status or search)
-api.get('/tabs', authenticate, (req: AuthRequest, res) => {
-  const db = readDb();
+api.get('/tabs', authenticate, async (req: AuthRequest, res) => {
+  const db = await readDb();
   let list = db.customerTabs || [];
   const status = req.query.status as string;
 
@@ -1007,7 +1037,7 @@ api.get('/tabs', authenticate, (req: AuthRequest, res) => {
 });
 
 // Create or open a new customer tab
-api.post('/tabs', authenticate, (req: AuthRequest, res) => {
+api.post('/tabs', authenticate, async (req: AuthRequest, res) => {
   const { customerName, phoneNumber, stationOrNote, items = [] } = req.body;
 
   if (!customerName || !customerName.trim()) {
@@ -1015,7 +1045,7 @@ api.post('/tabs', authenticate, (req: AuthRequest, res) => {
     return;
   }
 
-  const db = readDb();
+  const db = await readDb();
   db.customerTabs = db.customerTabs || [];
 
   const processedItems: CustomerTabItem[] = [];
@@ -1046,8 +1076,8 @@ api.post('/tabs', authenticate, (req: AuthRequest, res) => {
     }
   }
 
-  db.meta.lastTabSeq = (db.meta.lastTabSeq || 100) + 1;
-  const tabNumber = `TAB-${db.meta.lastTabSeq}`;
+  const tabSeq = await allocateTabSeq();
+  const tabNumber = `TAB-${tabSeq}`;
   const now = new Date().toISOString();
 
   const newTab: CustomerTab = {
@@ -1066,9 +1096,9 @@ api.post('/tabs', authenticate, (req: AuthRequest, res) => {
   };
 
   db.customerTabs.unshift(newTab);
-  saveDb(db);
+  await saveDb(db);
 
-  addAuditLog(
+  await addAuditLog(
     { id: req.user!.id, name: req.user!.name, role: req.user!.role },
     'TAB_CREATED',
     'TRANSACTION',
@@ -1087,9 +1117,9 @@ api.post('/tabs', authenticate, (req: AuthRequest, res) => {
 });
 
 // Update customer tab (e.g. add more games, edit quantities, update station note)
-api.put('/tabs/:id', authenticate, (req: AuthRequest, res) => {
+api.put('/tabs/:id', authenticate, async (req: AuthRequest, res) => {
   const { customerName, phoneNumber, stationOrNote, items } = req.body;
-  const db = readDb();
+  const db = await readDb();
   db.customerTabs = db.customerTabs || [];
 
   const tab = db.customerTabs.find(t => t.id === req.params.id);
@@ -1145,14 +1175,14 @@ api.put('/tabs/:id', authenticate, (req: AuthRequest, res) => {
   }
 
   tab.updatedAt = new Date().toISOString();
-  saveDb(db);
+  await saveDb(db);
 
   res.json({ tab });
 });
 
 // Delete or cancel an open customer tab
-api.delete('/tabs/:id', authenticate, (req: AuthRequest, res) => {
-  const db = readDb();
+api.delete('/tabs/:id', authenticate, async (req: AuthRequest, res) => {
+  const db = await readDb();
   db.customerTabs = db.customerTabs || [];
 
   const tabIndex = db.customerTabs.findIndex(t => t.id === req.params.id);
@@ -1168,9 +1198,9 @@ api.delete('/tabs/:id', authenticate, (req: AuthRequest, res) => {
   }
 
   db.customerTabs.splice(tabIndex, 1);
-  saveDb(db);
+  await saveDb(db);
 
-  addAuditLog(
+  await addAuditLog(
     { id: req.user!.id, name: req.user!.name, role: req.user!.role },
     'TAB_CANCELLED',
     'TRANSACTION',
@@ -1189,7 +1219,7 @@ api.delete('/tabs/:id', authenticate, (req: AuthRequest, res) => {
 });
 
 // Settle and checkout customer tab (processes payment, records transaction in ledger)
-api.post('/tabs/:id/checkout', authenticate, (req: AuthRequest, res) => {
+api.post('/tabs/:id/checkout', authenticate, async (req: AuthRequest, res) => {
   const { paymentMethod, paymentReference, senderName } = req.body;
 
   const validMethods: PaymentMethod[] = ['CASH', 'POS', 'BANK_TRANSFER'];
@@ -1203,7 +1233,7 @@ api.post('/tabs/:id/checkout', authenticate, (req: AuthRequest, res) => {
     return;
   }
 
-  const db = readDb();
+  const db = await readDb();
   db.customerTabs = db.customerTabs || [];
 
   const tab = db.customerTabs.find(t => t.id === req.params.id);
@@ -1225,8 +1255,7 @@ api.post('/tabs/:id/checkout', authenticate, (req: AuthRequest, res) => {
   const now = new Date();
   const businessDate = getLagosDateString(now);
 
-  db.meta.lastReceiptSeq = (db.meta.lastReceiptSeq || 1000) + 1;
-  const seq = db.meta.lastReceiptSeq;
+  const seq = await allocateReceiptSeq();
   const receiptNumber = `GL-${businessDate.replace(/-/g, '')}-${seq}`;
   const transactionId = `txn_${crypto.randomUUID()}`;
 
@@ -1282,9 +1311,9 @@ api.post('/tabs/:id/checkout', authenticate, (req: AuthRequest, res) => {
   tab.receiptNumber = receiptNumber;
   tab.transactionId = transactionId;
 
-  saveDb(db);
+  await saveDb(db);
 
-  addAuditLog(
+  await addAuditLog(
     { id: req.user!.id, name: req.user!.name, role: req.user!.role },
     'TAB_CHECKOUT',
     'TRANSACTION',
@@ -1305,14 +1334,14 @@ api.post('/tabs/:id/checkout', authenticate, (req: AuthRequest, res) => {
   res.json({ transaction: newTxn, tab });
 });
 
-api.get('/reconciliation', authenticate, requireAdmin, (req, res) => {
-  const db = readDb();
+api.get('/reconciliation', authenticate, requireAdmin, async (req, res) => {
+  const db = await readDb();
   res.json({ reconciliations: db.reconciliations });
 });
 
-api.get('/reconciliation/day/:date', authenticate, requireAdmin, (req, res) => {
+api.get('/reconciliation/day/:date', authenticate, requireAdmin, async (req, res) => {
   const { date } = req.params; // YYYY-MM-DD
-  const db = readDb();
+  const db = await readDb();
 
   // Calculate live recorded sales from non-voided transactions for this date
   const activeTxns = db.transactions.filter(
@@ -1382,7 +1411,7 @@ api.get('/reconciliation/day/:date', authenticate, requireAdmin, (req, res) => {
   }
 });
 
-api.post('/reconciliation/day/:date', authenticate, requireAdmin, (req: AuthRequest, res) => {
+api.post('/reconciliation/day/:date', authenticate, requireAdmin, async (req: AuthRequest, res) => {
   const { date } = req.params;
   const {
     actualCashKobo = 0,
@@ -1394,7 +1423,7 @@ api.post('/reconciliation/day/:date', authenticate, requireAdmin, (req: AuthRequ
     statusOverride,
   } = req.body;
 
-  const db = readDb();
+  const db = await readDb();
   const existing = db.reconciliations.find(r => r.businessDate === date);
 
   // If already balanced and locked, cannot overwrite without reopening
@@ -1495,9 +1524,9 @@ api.post('/reconciliation/day/:date', authenticate, requireAdmin, (req: AuthRequ
     db.reconciliations.push(rec);
   }
 
-  saveDb(db);
+  await saveDb(db);
 
-  addAuditLog(
+  await addAuditLog(
     { id: req.user!.id, name: req.user!.name, role: req.user!.role },
     'RECONCILIATION_SAVED',
     'RECONCILIATION',
@@ -1517,7 +1546,7 @@ api.post('/reconciliation/day/:date', authenticate, requireAdmin, (req: AuthRequ
   res.json({ reconciliation: rec });
 });
 
-api.post('/reconciliation/day/:date/reopen', authenticate, requireAdmin, (req: AuthRequest, res) => {
+api.post('/reconciliation/day/:date/reopen', authenticate, requireAdmin, async (req: AuthRequest, res) => {
   const { date } = req.params;
   const { reason } = req.body;
 
@@ -1526,7 +1555,7 @@ api.post('/reconciliation/day/:date/reopen', authenticate, requireAdmin, (req: A
     return;
   }
 
-  const db = readDb();
+  const db = await readDb();
   const rec = db.reconciliations.find(r => r.businessDate === date);
 
   if (!rec) {
@@ -1541,9 +1570,9 @@ api.post('/reconciliation/day/:date/reopen', authenticate, requireAdmin, (req: A
   rec.reopenReason = reason.trim();
   rec.updatedAt = new Date().toISOString();
 
-  saveDb(db);
+  await saveDb(db);
 
-  addAuditLog(
+  await addAuditLog(
     { id: req.user!.id, name: req.user!.name, role: req.user!.role },
     'RECONCILIATION_REOPENED',
     'RECONCILIATION',
@@ -1562,8 +1591,8 @@ api.post('/reconciliation/day/:date/reopen', authenticate, requireAdmin, (req: A
 // 5. DASHBOARD STATS
 // ==========================================
 
-api.get('/dashboard/stats', authenticate, (req: AuthRequest, res) => {
-  const db = readDb();
+api.get('/dashboard/stats', authenticate, async (req: AuthRequest, res) => {
+  const db = await readDb();
   const period = (req.query.period as string) || 'today';
   const now = new Date();
   const todayLagos = getLagosDateString(now);
@@ -1736,8 +1765,8 @@ api.get('/dashboard/stats', authenticate, (req: AuthRequest, res) => {
 // 6. CASHIERS ACCOUNT MANAGEMENT
 // ==========================================
 
-api.get('/cashiers', authenticate, requireAdmin, (req, res) => {
-  const db = readDb();
+api.get('/cashiers', authenticate, requireAdmin, async (req, res) => {
+  const db = await readDb();
   const todayLagos = getLagosDateString(new Date());
 
   const cashiers = db.users
@@ -1769,7 +1798,7 @@ api.get('/cashiers', authenticate, requireAdmin, (req, res) => {
   res.json({ cashiers });
 });
 
-api.post('/cashiers', authenticate, requireAdmin, (req: AuthRequest, res) => {
+api.post('/cashiers', authenticate, requireAdmin, async (req: AuthRequest, res) => {
   const { name, phoneNumber } = req.body;
 
   if (!name || !name.trim() || !phoneNumber || !phoneNumber.trim()) {
@@ -1785,7 +1814,7 @@ api.post('/cashiers', authenticate, requireAdmin, (req: AuthRequest, res) => {
     return;
   }
 
-  const db = readDb();
+  const db = await readDb();
   const exists = db.users.some(
     u => u.username.toLowerCase() === cleanPhone.toLowerCase() ||
          (u.phoneNumber && u.phoneNumber.replace(/\s+/g, '') === cleanPhone)
@@ -1822,9 +1851,9 @@ api.post('/cashiers', authenticate, requireAdmin, (req: AuthRequest, res) => {
   };
 
   db.users.push(newCashier);
-  saveDb(db);
+  await saveDb(db);
 
-  addAuditLog(
+  await addAuditLog(
     { id: req.user!.id, name: req.user!.name, role: req.user!.role },
     'CASHIER_CREATED',
     'USER',
@@ -1855,7 +1884,7 @@ api.post('/cashiers', authenticate, requireAdmin, (req: AuthRequest, res) => {
   res.status(201).json({ cashier: safeCashier });
 });
 
-api.patch('/cashiers/:id/status', authenticate, requireAdmin, (req: AuthRequest, res) => {
+api.patch('/cashiers/:id/status', authenticate, requireAdmin, async (req: AuthRequest, res) => {
   const { id } = req.params;
   const { isActive } = req.body;
 
@@ -1864,7 +1893,7 @@ api.patch('/cashiers/:id/status', authenticate, requireAdmin, (req: AuthRequest,
     return;
   }
 
-  const db = readDb();
+  const db = await readDb();
   const cashier = db.users.find(u => u.id === id && u.role === 'CASHIER');
 
   if (!cashier) {
@@ -1874,9 +1903,9 @@ api.patch('/cashiers/:id/status', authenticate, requireAdmin, (req: AuthRequest,
 
   const oldStatus = cashier.isActive;
   cashier.isActive = isActive;
-  saveDb(db);
+  await saveDb(db);
 
-  addAuditLog(
+  await addAuditLog(
     { id: req.user!.id, name: req.user!.name, role: req.user!.role },
     'CASHIER_STATUS_CHANGED',
     'USER',
@@ -1899,7 +1928,7 @@ api.patch('/cashiers/:id/status', authenticate, requireAdmin, (req: AuthRequest,
   });
 });
 
-api.post('/cashiers/:id/reset-password', authenticate, requireAdmin, (req: AuthRequest, res) => {
+api.post('/cashiers/:id/reset-password', authenticate, requireAdmin, async (req: AuthRequest, res) => {
   const { id } = req.params;
   const { newPassword } = req.body;
 
@@ -1908,7 +1937,7 @@ api.post('/cashiers/:id/reset-password', authenticate, requireAdmin, (req: AuthR
     return;
   }
 
-  const db = readDb();
+  const db = await readDb();
   const cashier = db.users.find(u => u.id === id && u.role === 'CASHIER');
 
   if (!cashier) {
@@ -1918,9 +1947,9 @@ api.post('/cashiers/:id/reset-password', authenticate, requireAdmin, (req: AuthR
 
   const salt = bcrypt.genSaltSync(10);
   cashier.passwordHash = bcrypt.hashSync(newPassword, salt);
-  saveDb(db);
+  await saveDb(db);
 
-  addAuditLog(
+  await addAuditLog(
     { id: req.user!.id, name: req.user!.name, role: req.user!.role },
     'CASHIER_PASSWORD_RESET',
     'USER',
@@ -1958,7 +1987,7 @@ function countCoinsInTxn(t: Transaction): number {
   return coins;
 }
 
-type Db = ReturnType<typeof readDb>;
+type Db = Awaited<ReturnType<typeof readDb>>;
 
 function computeCoinBalance(db: Db, cashierId: string, cashierName: string, startDate?: string, endDate?: string): CashierCoinBalance {
   const inWindow = (d: string) => (!startDate || d >= startDate) && (!endDate || d <= endDate);
@@ -2006,7 +2035,7 @@ function computeCoinBalance(db: Db, cashierId: string, cashierName: string, star
 }
 
 // Admin: hand a cashier a bulk float of physical coins (e.g. 200 coins)
-api.post('/coin-allocations', authenticate, requireAdmin, (req: AuthRequest, res) => {
+api.post('/coin-allocations', authenticate, requireAdmin, async (req: AuthRequest, res) => {
   const { cashierId, initialCoins, notes } = req.body;
   const coins = parseInt(initialCoins, 10);
 
@@ -2015,7 +2044,7 @@ api.post('/coin-allocations', authenticate, requireAdmin, (req: AuthRequest, res
     return;
   }
 
-  const db = readDb();
+  const db = await readDb();
   const cashier = db.users.find(u => u.id === cashierId && u.role === 'CASHIER');
   if (!cashier) {
     res.status(404).json({ error: 'Cashier account not found.' });
@@ -2041,9 +2070,9 @@ api.post('/coin-allocations', authenticate, requireAdmin, (req: AuthRequest, res
   };
 
   db.coinAllocations.unshift(allocation);
-  saveDb(db);
+  await saveDb(db);
 
-  addAuditLog(
+  await addAuditLog(
     { id: req.user!.id, name: req.user!.name, role: req.user!.role },
     'COIN_ALLOCATED',
     'COIN_ALLOCATION',
@@ -2062,8 +2091,8 @@ api.post('/coin-allocations', authenticate, requireAdmin, (req: AuthRequest, res
   res.status(201).json({ allocation });
 });
 
-api.get('/coin-allocations', authenticate, requireAdmin, (req, res) => {
-  const db = readDb();
+api.get('/coin-allocations', authenticate, requireAdmin, async (req, res) => {
+  const db = await readDb();
   let list = [...db.coinAllocations];
 
   if (req.query.cashierId) list = list.filter(a => a.cashierId === req.query.cashierId);
@@ -2075,8 +2104,8 @@ api.get('/coin-allocations', authenticate, requireAdmin, (req, res) => {
 });
 
 // Live computed coin float per cashier. Cashier sees only their own.
-api.get('/coin-balances', authenticate, (req: AuthRequest, res) => {
-  const db = readDb();
+api.get('/coin-balances', authenticate, async (req: AuthRequest, res) => {
+  const db = await readDb();
 
   const today = getLagosDateString(new Date());
   const startDate = (req.query.startDate as string) || today;
@@ -2092,7 +2121,7 @@ api.get('/coin-balances', authenticate, (req: AuthRequest, res) => {
 });
 
 // Admin: end-of-shift physical coin count — detects shortage / theft / loss
-api.post('/coin-allocations/:id/close', authenticate, requireAdmin, (req: AuthRequest, res) => {
+api.post('/coin-allocations/:id/close', authenticate, requireAdmin, async (req: AuthRequest, res) => {
   const { actualRemainingCoins, notes } = req.body;
   const actual = parseInt(actualRemainingCoins, 10);
 
@@ -2101,7 +2130,7 @@ api.post('/coin-allocations/:id/close', authenticate, requireAdmin, (req: AuthRe
     return;
   }
 
-  const db = readDb();
+  const db = await readDb();
   const allocation = db.coinAllocations.find(a => a.id === req.params.id);
 
   if (!allocation) {
@@ -2129,9 +2158,9 @@ api.post('/coin-allocations/:id/close', authenticate, requireAdmin, (req: AuthRe
   allocation.discrepancyCoins = discrepancy;
   allocation.closeNotes = notes ? String(notes).trim() : undefined;
 
-  saveDb(db);
+  await saveDb(db);
 
-  addAuditLog(
+  await addAuditLog(
     { id: req.user!.id, name: req.user!.name, role: req.user!.role },
     'COIN_ALLOCATION_CLOSED',
     'COIN_ALLOCATION',
@@ -2161,7 +2190,7 @@ api.post('/coin-allocations/:id/close', authenticate, requireAdmin, (req: AuthRe
 });
 
 // Admin or Cashier (self): report a lost/compensated coin (power outage, machine fault)
-api.post('/coin-compensations', authenticate, (req: AuthRequest, res) => {
+api.post('/coin-compensations', authenticate, async (req: AuthRequest, res) => {
   const { cashierId, customerName, gameId, gameName, coinsIssued, reason, notes } = req.body;
   const coins = parseInt(coinsIssued, 10);
 
@@ -2182,7 +2211,7 @@ api.post('/coin-compensations', authenticate, (req: AuthRequest, res) => {
     return;
   }
 
-  const db = readDb();
+  const db = await readDb();
 
   // Cashiers can only report for themselves; admins can report for any cashier
   let targetCashierId = req.user!.id;
@@ -2212,9 +2241,9 @@ api.post('/coin-compensations', authenticate, (req: AuthRequest, res) => {
   };
 
   db.coinCompensations.unshift(compensation);
-  saveDb(db);
+  await saveDb(db);
 
-  addAuditLog(
+  await addAuditLog(
     { id: req.user!.id, name: req.user!.name, role: req.user!.role },
     'COIN_COMPENSATION_RECORDED',
     'COIN_COMPENSATION',
@@ -2236,8 +2265,8 @@ api.post('/coin-compensations', authenticate, (req: AuthRequest, res) => {
   res.status(201).json({ compensation });
 });
 
-api.get('/coin-compensations', authenticate, (req: AuthRequest, res) => {
-  const db = readDb();
+api.get('/coin-compensations', authenticate, async (req: AuthRequest, res) => {
+  const db = await readDb();
   let list = [...db.coinCompensations];
 
   if (req.user!.role === 'CASHIER') {
@@ -2256,14 +2285,14 @@ api.get('/coin-compensations', authenticate, (req: AuthRequest, res) => {
 // ==========================================================
 
 // Both roles: cashiers need these to show customers for transfers
-api.get('/bank-accounts', authenticate, (req, res) => {
-  const db = readDb();
+api.get('/bank-accounts', authenticate, async (req, res) => {
+  const db = await readDb();
   const accounts = [...db.bankAccounts].sort((a, b) => a.slotNumber - b.slotNumber);
   res.json({ accounts });
 });
 
 // Admin: create or edit any slot anytime
-api.put('/bank-accounts/:slot', authenticate, requireAdmin, (req: AuthRequest, res) => {
+api.put('/bank-accounts/:slot', authenticate, requireAdmin, async (req: AuthRequest, res) => {
   const slot = parseInt(req.params.slot, 10);
   if (![1, 2, 3].includes(slot)) {
     res.status(400).json({ error: 'Only 3 bank account slots are supported (1, 2 or 3).' });
@@ -2286,7 +2315,7 @@ api.put('/bank-accounts/:slot', authenticate, requireAdmin, (req: AuthRequest, r
     return;
   }
 
-  const db = readDb();
+  const db = await readDb();
   const existing = db.bankAccounts.find(a => a.slotNumber === slot);
   const previousValues = existing
     ? {
@@ -2327,9 +2356,9 @@ api.put('/bank-accounts/:slot', authenticate, requireAdmin, (req: AuthRequest, r
     db.bankAccounts.push(record);
   }
 
-  saveDb(db);
+  await saveDb(db);
 
-  addAuditLog(
+  await addAuditLog(
     { id: req.user!.id, name: req.user!.name, role: req.user!.role },
     'BANK_ACCOUNT_UPDATED',
     'BANK_ACCOUNT',
@@ -2361,8 +2390,8 @@ api.put('/bank-accounts/:slot', authenticate, requireAdmin, (req: AuthRequest, r
 // voids, coin allocations, bank account edits, etc.) must survive forever
 // so shortage/theft investigations cannot be covered up.
 
-api.get('/audit-logs', authenticate, requireAdmin, (req, res) => {
-  const db = readDb();
+api.get('/audit-logs', authenticate, requireAdmin, async (req, res) => {
+  const db = await readDb();
   let logs = [...db.auditLogs];
 
   if (req.query.entityType) {
@@ -2414,8 +2443,8 @@ api.get('/audit-logs', authenticate, requireAdmin, (req, res) => {
 // 8. CSV EXPORT
 // ==========================================
 
-api.get('/export/transactions.csv', authenticate, requireAdmin, (req: AuthRequest, res) => {
-  const db = readDb();
+api.get('/export/transactions.csv', authenticate, requireAdmin, async (req: AuthRequest, res) => {
+  const db = await readDb();
   let list = [...db.transactions];
 
   if (req.query.startDate) list = list.filter(t => t.businessDate >= (req.query.startDate as string));
@@ -2470,6 +2499,12 @@ api.get('/export/transactions.csv', authenticate, requireAdmin, (req: AuthReques
 
   const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
   res.send(csvContent);
+});
+
+// Terminal error handler (reached via the async guard above)
+api.use((err: any, req: any, res: any, next: any) => {
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 export default api;

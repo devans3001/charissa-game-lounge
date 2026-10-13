@@ -30,7 +30,7 @@ export function verifyToken(token: string): any {
   }
 }
 
-export function authenticate(req: AuthRequest, res: Response, next: NextFunction): void {
+export async function authenticate(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     res.status(401).json({ error: 'Missing or malformed Authorization header' });
@@ -45,7 +45,7 @@ export function authenticate(req: AuthRequest, res: Response, next: NextFunction
     return;
   }
 
-  const db = readDb();
+  const db = await readDb();
   const user = db.users.find(u => u.id === payload.id);
 
   if (!user) {

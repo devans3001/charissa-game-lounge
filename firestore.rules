@@ -32,6 +32,11 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Correction Requests (cashier fix requests reviewed by admin)
+    match /correctionRequests/{requestId} {
+      allow read, write: if true;
+    }
+
     // Coin Allocations (Bulk coins given by Admin)
     match /coinAllocations/{allocationId} {
       allow read, write: if true;

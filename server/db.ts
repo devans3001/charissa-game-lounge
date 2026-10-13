@@ -87,402 +87,275 @@ export function cleanDoc<T>(obj: T): any {
   return JSON.parse(JSON.stringify(obj));
 }
 
-let dbCache: DbSchema | null = null;
-let isMigratedOrLoaded = false;
-let syncInProgress = false;
-let syncQueued = false;
+// ============================================================================
+// DIRECT FIRESTORE DATA LAYER
+// Every request reads straight from Cloud Firestore and every write is
+// awaited directly to Firestore BEFORE the HTTP response returns.
+// There is NO in-memory cache and NO background sync — Firestore is the
+// single source of truth. Any server instance serves any request identically.
+// ============================================================================
 
-// Persist a single document safely to Firestore
-async function setFirestoreDoc(collectionName: string, id: string, data: any): Promise<void> {
+const COLLECTIONS = [
+  'users',
+  'games',
+  'transactions',
+  'customerTabs',
+  'reconciliations',
+  'correctionRequests',
+  'coinAllocations',
+  'coinCompensations',
+  'bankAccounts',
+  'auditLogs',
+] as const;
+
+type CollectionName = (typeof COLLECTIONS)[number];
+
+type DbSnapshot = Record<CollectionName, Map<string, string>> & { meta: string };
+
+// Per-document JSON snapshot of the state loaded from Firestore, keyed by the
+// db object returned from readDb(). saveDb() diffs against it so only changed
+// documents are written (a sale writes ~4 docs, not the whole database).
+const loadSnapshots = new WeakMap<DbSchema, DbSnapshot>();
+
+function snapshotOf(db: DbSchema): DbSnapshot {
+  const snap = {} as any;
+  for (const coll of COLLECTIONS) {
+    snap[coll] = new Map<string, string>(
+      ((db as any)[coll] || []).map((d: any) => [d.id as string, JSON.stringify(cleanDoc(d))])
+    );
+  }
+  snap.meta = JSON.stringify(cleanDoc(db.meta));
+  return snap as DbSnapshot;
+}
+
+// Defensive normalization: guarantee every collection exists on the object
+function normalizeDb<T extends Partial<DbSchema>>(db: T): DbSchema {
+  db.users = db.users || [];
+  db.games = db.games || [];
+  db.transactions = db.transactions || [];
+  db.customerTabs = db.customerTabs || [];
+  db.reconciliations = db.reconciliations || [];
+  db.correctionRequests = db.correctionRequests || [];
+  db.coinAllocations = db.coinAllocations || [];
+  db.coinCompensations = db.coinCompensations || [];
+  db.bankAccounts = db.bankAccounts || [];
+  db.auditLogs = db.auditLogs || [];
+  db.meta = db.meta || { initialized: true, version: 1, lastReceiptSeq: 1000, lastTabSeq: 100 };
+  return db as DbSchema;
+}
+
+// Read the ENTIRE database directly from Firestore (all collections in
+// parallel). Data volume for a game lounge is tiny, so a full read per
+// request is cheap and keeps every endpoint's business logic unchanged.
+//
+// Reads are ISOLATED per collection: if one collection is blocked (e.g. a
+// missing security rule — see firestore.rules), the rest still load and the
+// request proceeds with that collection empty. The failure is logged loudly
+// with the collection name so it can never fail silently.
+export async function readDb(): Promise<DbSchema> {
+  const fsDb = getFirestore();
+
+  const collResults = await Promise.all(
+    COLLECTIONS.map(async (c) => {
+      try {
+        const snap = await getDocs(collection(fsDb, c));
+        const arr: any[] = [];
+        snap.forEach((d) => arr.push(d.data()));
+        return { coll: c, docs: arr };
+      } catch (err: any) {
+        console.error(
+          `[Firestore] BLOCKED read on collection '${c}' — check firestore.rules is deployed for it:`,
+          err?.message || err
+        );
+        return { coll: c, docs: [] as any[] };
+      }
+    })
+  );
+
+  let metaDocData: any = null;
+  try {
+    const metaDocSnap = await getDoc(doc(fsDb, 'meta', 'system'));
+    if (metaDocSnap.exists()) metaDocData = metaDocSnap.data();
+  } catch (err: any) {
+    console.error('[Firestore] BLOCKED read on meta/system:', err?.message || err);
+  }
+
+  const db = {} as DbSchema;
+  for (const { coll, docs } of collResults) {
+    (db as any)[coll] = docs;
+  }
+
+  // Audit logs: newest first (matches historical in-memory behavior)
+  db.auditLogs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  let meta = { initialized: true, version: 1, lastReceiptSeq: 1000, lastTabSeq: 100 };
+  if (metaDocData) {
+    meta = {
+      initialized: metaDocData.initialized ?? true,
+      version: metaDocData.version ?? 1,
+      lastReceiptSeq: metaDocData.lastReceiptSeq ?? 1000,
+      lastTabSeq: metaDocData.lastTabSeq ?? 100,
+    };
+  }
+  db.meta = meta;
+
+  normalizeDb(db);
+  loadSnapshots.set(db, snapshotOf(db));
+  return db;
+}
+
+
+// Write the database state directly to Firestore. Uses the load-time
+// snapshot to compute a per-document diff: only changed/new documents are
+// written, removed documents are deleted — every write is awaited here
+// before the request completes, so nothing can ever be lost to a restart
+// or redeploy. Errors on individual documents are isolated (logged, not
+// fatal) so one failed write never blocks the others.
+export async function saveDb(db: DbSchema): Promise<void> {
+  const fsDb = getFirestore();
+  const prev = loadSnapshots.get(db);
+  const writes: Promise<void>[] = [];
+
+  for (const coll of COLLECTIONS) {
+    const prevMap: Map<string, string> = prev?.[coll] ?? new Map();
+    const current = ((db as any)[coll] || []) as any[];
+    const currentIds = new Set<string>();
+
+    for (const docData of current) {
+      currentIds.add(docData.id);
+      const json = JSON.stringify(cleanDoc(docData));
+      if (prevMap.get(docData.id) !== json) {
+        writes.push(
+          setDoc(doc(fsDb, coll, docData.id), cleanDoc(docData), { merge: true }).catch((err: any) => {
+            console.error(`[Firestore] Failed writing ${coll}/${docData.id}:`, err?.message || err);
+          })
+        );
+      }
+    }
+
+    for (const [existingId] of prevMap) {
+      if (!currentIds.has(existingId)) {
+        writes.push(
+          deleteDoc(doc(fsDb, coll, existingId)).catch((err: any) => {
+            // Immutable collections (transactions, auditLogs, coinCompensations)
+            // are protected by firestore.rules from deletion — logged, not fatal.
+            console.error(`[Firestore] Failed deleting ${coll}/${existingId}:`, err?.message || err);
+          })
+        );
+      }
+    }
+  }
+
+  await Promise.all(writes);
+
+  // meta/system counters: monotonic — never allowed to move backwards
+  await persistMeta(db.meta);
+
+  loadSnapshots.set(db, snapshotOf(db));
+}
+
+async function persistMeta(meta: DbSchema['meta']): Promise<void> {
   try {
     const fsDb = getFirestore();
-    const docRef = doc(fsDb, collectionName, id);
-    await setDoc(docRef, cleanDoc(data), { merge: true });
+    const metaRef = doc(fsDb, 'meta', 'system');
+    await runTransaction(fsDb, async (t) => {
+      const snap = await t.get(metaRef);
+      let curReceipt = 1000;
+      let curTab = 100;
+      if (snap.exists()) {
+        const d = snap.data();
+        curReceipt = d.lastReceiptSeq || 1000;
+        curTab = d.lastTabSeq || 100;
+      }
+      t.set(
+        metaRef,
+        cleanDoc({
+          lastReceiptSeq: Math.max(curReceipt, meta?.lastReceiptSeq || 1000),
+          lastTabSeq: Math.max(curTab, meta?.lastTabSeq || 100),
+          initialized: true,
+          version: meta?.version || 1,
+          updatedAt: new Date().toISOString(),
+        }),
+        { merge: true }
+      );
+    });
   } catch (err: any) {
-    console.error(`Failed to persist doc to ${collectionName}/${id}:`, err?.message || err);
+    console.error('[Firestore] Failed updating meta/system:', err?.message || err);
   }
 }
 
-// Initialize Firestore on server start: migrate if empty, else load collections
+
+// Atomic counter allocation — safe even when multiple cashiers create sales
+// at the exact same moment (Firestore transaction guarantees no duplicates).
+export async function allocateReceiptSeq(): Promise<number> {
+  const fsDb = getFirestore();
+  const metaRef = doc(fsDb, 'meta', 'system');
+  return await runTransaction(fsDb, async (t) => {
+    const snap = await t.get(metaRef);
+    const cur = snap.exists() ? snap.data().lastReceiptSeq || 1000 : 1000;
+    const next = cur + 1;
+    t.set(metaRef, cleanDoc({ lastReceiptSeq: next, updatedAt: new Date().toISOString() }), { merge: true });
+    return next;
+  });
+}
+
+export async function allocateTabSeq(): Promise<number> {
+  const fsDb = getFirestore();
+  const metaRef = doc(fsDb, 'meta', 'system');
+  return await runTransaction(fsDb, async (t) => {
+    const snap = await t.get(metaRef);
+    const cur = snap.exists() ? snap.data().lastTabSeq || 100 : 100;
+    const next = cur + 1;
+    t.set(metaRef, cleanDoc({ lastTabSeq: next, updatedAt: new Date().toISOString() }), { merge: true });
+    return next;
+  });
+}
+
+// Boot: verify connectivity, and seed the initial catalog + admin account
+// ONLY when the users collection is completely empty (first-ever boot).
 export async function initFirestoreDb(): Promise<void> {
   try {
     const fsDb = getFirestore();
-    console.log('[Firestore] Checking users collection in Firestore...');
+    console.log('[Firestore] Checking users collection...');
     const usersSnap = await getDocs(collection(fsDb, 'users'));
 
     if (usersSnap.size === 0) {
-      console.log('[Firestore] Users collection is empty. Starting initial migration from data/db.json into Firestore...');
-      let sourceDb: DbSchema;
-      if (fs.existsSync(DB_FILE)) {
-        try {
-          sourceDb = JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
-        } catch (e) {
-          sourceDb = createInitialDb();
+      console.log('[Firestore] Empty database — seeding initial catalog and admin account...');
+      const seed = normalizeDb(readBackupJson());
+      let count = 0;
+      for (const coll of COLLECTIONS) {
+        for (const d of ((seed as any)[coll] as any[]) || []) {
+          await setDoc(doc(fsDb, coll, d.id), cleanDoc(d));
+          count++;
         }
-      } else {
-        sourceDb = createInitialDb();
       }
-
-      // Ensure all arrays exist
-      if (!sourceDb.customerTabs) sourceDb.customerTabs = [];
-      if (!sourceDb.coinAllocations) sourceDb.coinAllocations = [];
-      if (!sourceDb.coinCompensations) sourceDb.coinCompensations = [];
-      if (!sourceDb.bankAccounts) sourceDb.bankAccounts = [];
-      if (!sourceDb.reconciliations) sourceDb.reconciliations = [];
-      if (!sourceDb.transactions) sourceDb.transactions = [];
-      if (!sourceDb.auditLogs) sourceDb.auditLogs = [];
-      if (!sourceDb.meta) {
-        sourceDb.meta = { initialized: true, version: 1, lastReceiptSeq: 1000, lastTabSeq: 100 };
-      }
-
-      // 1. Migrate users
-      for (const u of sourceDb.users) {
-        await setDoc(doc(fsDb, 'users', u.id), u);
-      }
-      // 2. Migrate games
-      for (const g of sourceDb.games) {
-        await setDoc(doc(fsDb, 'games', g.id), g);
-      }
-      // 3. Migrate transactions
-      for (const t of sourceDb.transactions) {
-        await setDoc(doc(fsDb, 'transactions', t.id), t);
-      }
-      // 4. Migrate customerTabs
-      for (const tab of sourceDb.customerTabs) {
-        await setDoc(doc(fsDb, 'customerTabs', tab.id), tab);
-      }
-      // 5. Migrate coinAllocations
-      for (const a of sourceDb.coinAllocations) {
-        await setDoc(doc(fsDb, 'coinAllocations', a.id), a);
-      }
-      // 6. Migrate coinCompensations
-      for (const c of sourceDb.coinCompensations) {
-        await setDoc(doc(fsDb, 'coinCompensations', c.id), c);
-      }
-      // 7. Migrate bankAccounts
-      for (const b of sourceDb.bankAccounts) {
-        await setDoc(doc(fsDb, 'bankAccounts', b.id), b);
-      }
-      // 8. Migrate reconciliations
-      for (const r of sourceDb.reconciliations) {
-        await setDoc(doc(fsDb, 'reconciliations', r.id), r);
-      }
-      // 9. Migrate auditLogs
-      for (const log of sourceDb.auditLogs) {
-        await setDoc(doc(fsDb, 'auditLogs', log.id), log);
-      }
-      // 10. Migrate meta/system doc
-      await setDoc(doc(fsDb, 'meta', 'system'), {
-        lastReceiptSeq: sourceDb.meta.lastReceiptSeq || 1000,
-        lastTabSeq: sourceDb.meta.lastTabSeq || 100,
-        initialized: true,
-        version: sourceDb.meta.version || 1,
-        updatedAt: new Date().toISOString(),
-      });
-
-      dbCache = sourceDb;
-      console.log(
-        `[Firestore] Initial migration complete: ${sourceDb.users.length} users, ${sourceDb.games.length} games, ${sourceDb.auditLogs.length} audit logs migrated to Cloud Firestore.`
-      );
+      await persistMeta(seed.meta);
+      console.log(`[Firestore] Seeded ${count} documents. Login: admin / AdminPass123!`);
     } else {
-      console.log('[Firestore] Loading all collections from Cloud Firestore into memory cache...');
-      const [
-        usersSnap,
-        gamesSnap,
-        txnsSnap,
-        tabsSnap,
-        allocSnap,
-        compSnap,
-        bankSnap,
-        recSnap,
-        auditSnap,
-        metaDocSnap,
-      ] = await Promise.all([
-        getDocs(collection(fsDb, 'users')),
-        getDocs(collection(fsDb, 'games')),
-        getDocs(collection(fsDb, 'transactions')),
-        getDocs(collection(fsDb, 'customerTabs')),
-        getDocs(collection(fsDb, 'coinAllocations')),
-        getDocs(collection(fsDb, 'coinCompensations')),
-        getDocs(collection(fsDb, 'bankAccounts')),
-        getDocs(collection(fsDb, 'reconciliations')),
-        getDocs(collection(fsDb, 'auditLogs')),
-        getDoc(doc(fsDb, 'meta', 'system')),
-      ]);
-
-      const users: (User & { passwordHash: string })[] = [];
-      usersSnap.forEach((d) => users.push(d.data() as any));
-
-      const games: Game[] = [];
-      gamesSnap.forEach((d) => games.push(d.data() as any));
-
-      const transactions: Transaction[] = [];
-      txnsSnap.forEach((d) => transactions.push(d.data() as any));
-
-      const customerTabs: CustomerTab[] = [];
-      tabsSnap.forEach((d) => customerTabs.push(d.data() as any));
-
-      const coinAllocations: CoinAllocation[] = [];
-      allocSnap.forEach((d) => coinAllocations.push(d.data() as any));
-
-      const coinCompensations: CoinCompensation[] = [];
-      compSnap.forEach((d) => coinCompensations.push(d.data() as any));
-
-      const bankAccounts: BankAccount[] = [];
-      bankSnap.forEach((d) => bankAccounts.push(d.data() as any));
-
-      const reconciliations: DailyReconciliation[] = [];
-      recSnap.forEach((d) => reconciliations.push(d.data() as any));
-
-      const auditLogs: AuditLog[] = [];
-      auditSnap.forEach((d) => auditLogs.push(d.data() as any));
-      // Sort newest first by timestamp
-      auditLogs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-
-      let meta = {
-        initialized: true,
-        version: 1,
-        lastReceiptSeq: 1000,
-        lastTabSeq: 100,
-      };
-
-      if (metaDocSnap.exists()) {
-        const mData = metaDocSnap.data();
-        meta = {
-          initialized: mData.initialized ?? true,
-          version: mData.version ?? 1,
-          lastReceiptSeq: mData.lastReceiptSeq ?? 1000,
-          lastTabSeq: mData.lastTabSeq ?? 100,
-        };
-      }
-
-      dbCache = {
-        users,
-        games,
-        transactions,
-        customerTabs,
-        reconciliations,
-        correctionRequests: [],
-        coinAllocations,
-        coinCompensations,
-        bankAccounts,
-        auditLogs,
-        meta,
-      };
-
-      console.log(
-        `[Firestore] Loaded: ${users.length} users, ${games.length} games, ${transactions.length} txns, ${coinAllocations.length} allocations, ${bankAccounts.length} bank accounts, ${auditLogs.length} audit logs.`
-      );
+      console.log('[Firestore] Live data present — direct mode ready.');
     }
-
-    isMigratedOrLoaded = true;
-    // Write backup copy to data/db.json
-    saveBackupJson(dbCache!);
   } catch (err: any) {
-    console.error('[Firestore] Error in initFirestoreDb:', err);
-    if (!dbCache) {
-      dbCache = readBackupJson();
-    }
+    // Server still starts; requests will fail loudly with the Firestore error
+    console.error('[Firestore] Init failed (server will still start, requests may fail):', err?.message || err);
   }
 }
 
+// Optional first-boot seed source: the legacy data/db.json file
 function readBackupJson(): DbSchema {
   try {
     if (fs.existsSync(DB_FILE)) {
       const raw = fs.readFileSync(DB_FILE, 'utf-8');
       const parsed = JSON.parse(raw);
-      if (!parsed.customerTabs) parsed.customerTabs = [];
-      if (!parsed.coinAllocations) parsed.coinAllocations = [];
-      if (!parsed.coinCompensations) parsed.coinCompensations = [];
-      if (!parsed.bankAccounts) parsed.bankAccounts = [];
-      if (!parsed.reconciliations) parsed.reconciliations = [];
-      if (!parsed.transactions) parsed.transactions = [];
-      if (!parsed.auditLogs) parsed.auditLogs = [];
-      if (!parsed.meta) parsed.meta = { initialized: true, version: 1, lastReceiptSeq: 1000, lastTabSeq: 100 };
-      return parsed;
+      return normalizeDb(parsed);
     }
   } catch (e) {
-    console.error('Failed to read db.json backup:', e);
+    console.error('Failed to read db.json seed file:', e);
   }
   return createInitialDb();
 }
 
-function saveBackupJson(db: DbSchema): void {
-  // Requirement 4: data/db.json must remain untouched as a backup
-  return;
-}
-
-export function readDb(): DbSchema {
-  if (dbCache) {
-    if (!dbCache.customerTabs) dbCache.customerTabs = [];
-    if (!dbCache.coinAllocations) dbCache.coinAllocations = [];
-    if (!dbCache.coinCompensations) dbCache.coinCompensations = [];
-    if (!dbCache.bankAccounts) dbCache.bankAccounts = [];
-    if (!dbCache.reconciliations) dbCache.reconciliations = [];
-    if (!dbCache.transactions) dbCache.transactions = [];
-    if (!dbCache.auditLogs) dbCache.auditLogs = [];
-    return dbCache;
-  }
-  dbCache = readBackupJson();
-  return dbCache;
-}
-
-// Track known doc IDs to avoid unnecessary duplicate writes
-const knownUserIds = new Set<string>();
-const knownGameIds = new Set<string>();
-const knownTxnIds = new Set<string>();
-const knownTabIds = new Set<string>();
-const knownAllocIds = new Set<string>();
-const knownCompIds = new Set<string>();
-const knownBankIds = new Set<string>();
-const knownReconIds = new Set<string>();
-const knownAuditIds = new Set<string>();
-
-export function saveDb(db: DbSchema): void {
-  dbCache = db;
-  // Always update local db.json backup
-  saveBackupJson(db);
-
-  // Synchronize changes to Cloud Firestore
-  scheduleFirestoreSync();
-}
-
-function scheduleFirestoreSync(): void {
-  if (syncInProgress) {
-    syncQueued = true;
-    return;
-  }
-  syncInProgress = true;
-  syncQueued = false;
-
-  persistToFirestoreAsync(dbCache || readBackupJson())
-    .catch((err) => {
-      console.error('Error during Firestore sync:', err?.message || err);
-    })
-    .finally(() => {
-      syncInProgress = false;
-      if (syncQueued) {
-        scheduleFirestoreSync();
-      }
-    });
-}
-
-// Force wait for all pending writes to finish
-export async function flushDbToFirestore(): Promise<void> {
-  const currentDb = dbCache || readBackupJson();
-  await persistToFirestoreAsync(currentDb);
-}
-
-async function persistToFirestoreAsync(db: DbSchema): Promise<void> {
-  try {
-    const fsDb = getFirestore();
-
-    // 1. Users
-    for (const u of db.users) {
-      await setDoc(doc(fsDb, 'users', u.id), cleanDoc(u), { merge: true });
-    }
-
-    // 2. Games
-    for (const g of db.games) {
-      await setDoc(doc(fsDb, 'games', g.id), cleanDoc(g), { merge: true });
-    }
-
-    // 3. Transactions (undeletable)
-    for (const t of db.transactions) {
-      if (!knownTxnIds.has(t.id) || t.status === 'VOIDED' || t.status === 'CORRECTED') {
-        await setDoc(doc(fsDb, 'transactions', t.id), cleanDoc(t), { merge: true });
-        knownTxnIds.add(t.id);
-      }
-    }
-
-    // 4. Customer Tabs
-    const currentTabIds = new Set(db.customerTabs.map((tb) => tb.id));
-    for (const tab of db.customerTabs) {
-      await setDoc(doc(fsDb, 'customerTabs', tab.id), cleanDoc(tab), { merge: true });
-      knownTabIds.add(tab.id);
-    }
-    // Delete any tabs removed from active collection (draft tabs cancelled)
-    for (const existingId of Array.from(knownTabIds)) {
-      if (!currentTabIds.has(existingId)) {
-        try {
-          await deleteDoc(doc(fsDb, 'customerTabs', existingId));
-          knownTabIds.delete(existingId);
-        } catch (e) {
-          // ignore
-        }
-      }
-    }
-
-    // 5. Coin Allocations
-    for (const a of db.coinAllocations) {
-      await setDoc(doc(fsDb, 'coinAllocations', a.id), cleanDoc(a), { merge: true });
-      knownAllocIds.add(a.id);
-    }
-
-    // 6. Coin Compensations
-    for (const c of db.coinCompensations) {
-      if (!knownCompIds.has(c.id)) {
-        await setDoc(doc(fsDb, 'coinCompensations', c.id), cleanDoc(c), { merge: true });
-        knownCompIds.add(c.id);
-      }
-    }
-
-    // 7. Bank Accounts
-    for (const b of db.bankAccounts) {
-      await setDoc(doc(fsDb, 'bankAccounts', b.id), cleanDoc(b), { merge: true });
-      knownBankIds.add(b.id);
-    }
-
-    // 8. Reconciliations
-    for (const r of db.reconciliations) {
-      await setDoc(doc(fsDb, 'reconciliations', r.id), cleanDoc(r), { merge: true });
-      knownReconIds.add(r.id);
-    }
-
-    // 9. Audit Logs (append-only, immutable)
-    for (const l of db.auditLogs) {
-      if (!knownAuditIds.has(l.id)) {
-        await setDoc(doc(fsDb, 'auditLogs', l.id), cleanDoc(l));
-        knownAuditIds.add(l.id);
-      }
-    }
-
-    // 10. Meta / system document: run Firestore transaction to ensure atomic sequence numbers
-    try {
-      const metaRef = doc(fsDb, 'meta', 'system');
-      await runTransaction(fsDb, async (t) => {
-        const snap = await t.get(metaRef);
-        let curReceipt = 1000;
-        let curTab = 100;
-        if (snap.exists()) {
-          const d = snap.data();
-          curReceipt = d.lastReceiptSeq || 1000;
-          curTab = d.lastTabSeq || 100;
-        }
-        const nextReceipt = Math.max(curReceipt, db.meta?.lastReceiptSeq || 1000);
-        const nextTab = Math.max(curTab, db.meta?.lastTabSeq || 100);
-        t.set(
-          metaRef,
-          cleanDoc({
-            lastReceiptSeq: nextReceipt,
-            lastTabSeq: nextTab,
-            initialized: true,
-            version: db.meta?.version || 1,
-            updatedAt: new Date().toISOString(),
-          }),
-          { merge: true }
-        );
-      });
-    } catch (metaErr: any) {
-      console.error('Failed to update meta/system transaction:', metaErr?.message || metaErr);
-    }
-  } catch (err: any) {
-    console.error('Error persisting to Firestore:', err?.message || err);
-  }
-}
-
-// Log audit helper (append-only)
-export function addAuditLog(
+// Log audit helper (append-only — audit logs are NEVER updated or deleted)
+export async function addAuditLog(
   actor: { id: string; name: string; role: 'ADMIN' | 'CASHIER' | 'SYSTEM' },
   action: string,
   entityType:
@@ -501,8 +374,8 @@ export function addAuditLog(
     newValues?: Record<string, any>;
     reason?: string;
   } = {}
-): AuditLog {
-  const db = readDb();
+): Promise<AuditLog> {
+  const db = await readDb();
   const now = new Date();
   const log: AuditLog = {
     id: `audit_${crypto.randomUUID()}`,
@@ -519,43 +392,10 @@ export function addAuditLog(
     businessDate: getLagosDateString(now),
   };
   db.auditLogs.unshift(log); // newest first
-  saveDb(db);
-
-  // Directly create the immutable document in Cloud Firestore
-  setFirestoreDoc('auditLogs', log.id, log);
-
+  await saveDb(db); // writes the new log document directly to Firestore
   return log;
 }
 
-// Helper to allocate receipt sequence atomically in Firestore
-export async function allocateReceiptSeqTransaction(): Promise<number> {
-  const fsDb = getFirestore();
-  const metaRef = doc(fsDb, 'meta', 'system');
-  return await runTransaction(fsDb, async (t) => {
-    const snap = await t.get(metaRef);
-    let lastReceiptSeq = 1000;
-    let lastTabSeq = 100;
-    if (snap.exists()) {
-      const d = snap.data();
-      lastReceiptSeq = d.lastReceiptSeq || 1000;
-      lastTabSeq = d.lastTabSeq || 100;
-    }
-    const nextSeq = lastReceiptSeq + 1;
-    t.set(
-      metaRef,
-      {
-        lastReceiptSeq: nextSeq,
-        lastTabSeq,
-        updatedAt: new Date().toISOString(),
-      },
-      { merge: true }
-    );
-    if (dbCache && dbCache.meta) {
-      dbCache.meta.lastReceiptSeq = nextSeq;
-    }
-    return nextSeq;
-  });
-}
 
 function createInitialDb(): DbSchema {
   const adminId = 'usr_admin_master';
