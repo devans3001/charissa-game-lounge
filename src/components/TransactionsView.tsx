@@ -752,8 +752,8 @@ export function TransactionsView() {
 
       {/* Transaction Details Modal */}
       {selectedTxn && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 text-slate-100 shadow-2xl relative">
+        <div onClick={() => setSelectedTxn(null)} className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div onClick={e => e.stopPropagation()} className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 text-slate-100 shadow-2xl relative">
             <button
               type="button"
               onClick={() => setSelectedTxn(null)}
@@ -862,8 +862,8 @@ export function TransactionsView() {
 
       {/* Admin Void Modal */}
       {voidModalTxn && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 text-slate-100 shadow-2xl">
+        <div onClick={() => setVoidModalTxn(null)} className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div onClick={e => e.stopPropagation()} className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 text-slate-100 shadow-2xl">
             <div className="flex items-center gap-3 mb-3 text-rose-400">
               <Ban className="w-6 h-6" />
               <h3 className="font-bold text-white text-base">Void Financial Transaction</h3>
@@ -911,8 +911,8 @@ export function TransactionsView() {
 
       {/* Admin Correct Modal */}
       {correctModalTxn && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 text-slate-100 shadow-2xl">
+        <div onClick={() => setCorrectModalTxn(null)} className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div onClick={e => e.stopPropagation()} className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 text-slate-100 shadow-2xl">
             <div className="flex items-center gap-3 mb-3 text-amber-400">
               <Pencil className="w-5 h-5" />
               <h3 className="font-bold text-white text-base">Correct Payment Method / Slip</h3>
@@ -988,8 +988,8 @@ export function TransactionsView() {
 
       {/* Cashier Request Correction Modal */}
       {requestModalTxn && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 text-slate-100 shadow-2xl">
+        <div onClick={() => setRequestModalTxn(null)} className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div onClick={e => e.stopPropagation()} className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 text-slate-100 shadow-2xl">
             <div className="flex items-center gap-3 mb-3 text-amber-400">
               <FileQuestion className="w-5 h-5" />
               <h3 className="font-bold text-white text-base">Request Error Correction</h3>

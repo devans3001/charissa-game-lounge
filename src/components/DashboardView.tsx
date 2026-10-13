@@ -318,7 +318,7 @@ export function DashboardView({
               <span className="text-xl font-bold font-mono text-orange-400">{stats.coinStats.totalVoided}</span>
             </div>
             <div className="text-center">
-              <span className="text-[10px] uppercase tracking-wider text-slate-400 block mb-1">Compensated</span>
+              <span className="text-[10px] uppercase tracking-wider text-slate-400 block mb-1">Lost coins</span>
               <span className="text-xl font-bold font-mono text-amber-400">{stats.coinStats.totalCompensated}</span>
             </div>
             <div className="text-center">

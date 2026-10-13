@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CoinAllocation, CoinCompensation, CashierCoinBalance, User } from '../types/index.ts';
+import { CoinAllocation, CoinCompensation, CashierCoinBalance, User, Game } from '../types/index.ts';
 import { api } from '../lib/api.ts';
 import { useAuth } from '../context/AuthContext.tsx';
 import { formatLagosDateTime } from '../lib/utils.ts';
@@ -48,14 +48,16 @@ export function CoinVaultView() {
   const [closeNotes, setCloseNotes] = useState('');
   const [submittingClose, setSubmittingClose] = useState(false);
 
-  // Compensation (power outage) form state
+  // Lost-coin (power outage / machine fault) form state
   const [showCompModal, setShowCompModal] = useState(false);
   const [compCustomerName, setCompCustomerName] = useState('');
+  const [compGameId, setCompGameId] = useState('');
   const [compGameName, setCompGameName] = useState('');
   const [compCoins, setCompCoins] = useState('1');
   const [compReason, setCompReason] = useState('');
   const [compNotes, setCompNotes] = useState('');
   const [submittingComp, setSubmittingComp] = useState(false);
+  const [coinGames, setCoinGames] = useState<Game[]>([]);
 
   useEffect(() => {
     loadData();
@@ -65,12 +67,14 @@ export function CoinVaultView() {
     try {
       setLoading(true);
       setError(null);
-      const [balRes, compRes] = await Promise.all([
+      const [balRes, compRes, gamesRes] = await Promise.all([
         api.coins.balances({}),
         api.coins.compensations.list({}),
+        api.games.list(),
       ]);
       setBalances(balRes.balances);
       setCompensations(compRes.compensations);
+      setCoinGames((gamesRes.games || []).filter(g => g.category === 'COIN_GAME' && g.isActive));
 
       if (isAdmin) {
         const [allocRes, cashRes] = await Promise.all([
@@ -85,6 +89,24 @@ export function CoinVaultView() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // When a coin game is picked from the dropdown, prefill its standard coin count
+  const handleCompGameSelect = (gameId: string) => {
+    setCompGameId(gameId);
+    const g = coinGames.find(x => x.id === gameId);
+    setCompGameName(g ? g.name : '');
+    if (g && g.coinsRequired > 0) setCompCoins(String(g.coinsRequired));
+  };
+
+  const openCompModal = () => {
+    setCompCustomerName('');
+    setCompGameId('');
+    setCompGameName('');
+    setCompCoins('1');
+    setCompReason('');
+    setCompNotes('');
+    setShowCompModal(true);
   };
 
   const showToast = (msg: string) => {
@@ -157,7 +179,7 @@ export function CoinVaultView() {
   const handleCompensation = async (e: React.FormEvent) => {
     e.preventDefault();
     const coins = parseInt(compCoins, 10);
-    if (!compCustomerName.trim() || !compGameName.trim() || !Number.isFinite(coins) || coins < 1 || !compReason.trim()) {
+    if (!compCustomerName.trim() || !compGameId || !Number.isFinite(coins) || coins < 1 || !compReason.trim()) {
       setError('Fill in customer name, game, number of coins and what happened.');
       return;
     }
@@ -166,21 +188,23 @@ export function CoinVaultView() {
       setError(null);
       await api.coins.compensations.create({
         customerName: compCustomerName.trim(),
+        gameId: compGameId,
         gameName: compGameName.trim(),
         coinsIssued: coins,
         reason: compReason.trim(),
         notes: compNotes.trim() || undefined,
       });
-      showToast(`${coins} replacement coin(s) recorded for ${compCustomerName.trim()}. Deducted from the float.`);
+      showToast(`${coins} lost coin(s) recorded for ${compCustomerName.trim()}. Deducted from the float.`);
       setShowCompModal(false);
       setCompCustomerName('');
+      setCompGameId('');
       setCompGameName('');
       setCompCoins('1');
       setCompReason('');
       setCompNotes('');
       loadData();
     } catch (err: any) {
-      setError(err.message || 'Failed to record compensation');
+      setError(err.message || 'Failed to record lost coins');
     } finally {
       setSubmittingComp(false);
     }
@@ -218,11 +242,11 @@ export function CoinVaultView() {
           )}
           <button
             type="button"
-            onClick={() => setShowCompModal(true)}
+            onClick={openCompModal}
             className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold flex items-center gap-2 transition cursor-pointer"
           >
             <Zap className="w-4 h-4 text-amber-400" />
-            Report Lost Coin (Power Outage)
+            Report Lost Coins (Power Outage)
           </button>
         </div>
       </div>
@@ -304,7 +328,7 @@ export function CoinVaultView() {
                       {/* Breakdown */}
                       <div className="space-y-1.5 text-xs">
                         <div className="flex justify-between">
-                          <span className="text-slate-400">Allocated (given)</span>
+                          <span className="text-slate-400">Given</span>
                           <span className="font-mono text-slate-200">{b.allocatedCoins}</span>
                         </div>
                         <div className="flex justify-between">
@@ -316,7 +340,7 @@ export function CoinVaultView() {
                           <span className="font-mono text-orange-400">−{b.voidedCoins}</span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-slate-400">Compensated (power out)</span>
+                          <span className="text-slate-400">Lost coins</span>
                           <span className="font-mono text-amber-400">−{b.compensatedCoins}</span>
                         </div>
 
@@ -451,12 +475,12 @@ export function CoinVaultView() {
             </div>
           )}
 
-          {/* Compensations log */}
+          {/* Lost-coins log */}
           {compensations.length > 0 && (
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5">
               <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-300 mb-3 sm:mb-4 flex items-center gap-2">
                 <Zap className="w-4 h-4 text-amber-400" />
-                Power-Outage / Lost Coin Compensation Log
+                Power-Outage / Lost Coins Log
               </h3>
 
               {/* Mobile Cards View */}
@@ -517,8 +541,8 @@ export function CoinVaultView() {
 
       {/* ============ ALLOCATE MODAL (ADMIN) ============ */}
       {showAllocateModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 text-slate-100 shadow-2xl relative">
+        <div onClick={() => setShowAllocateModal(false)} className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div onClick={e => e.stopPropagation()} className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 text-slate-100 shadow-2xl relative">
             <button type="button" onClick={() => setShowAllocateModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white">
               <X className="w-5 h-5" />
             </button>
@@ -580,8 +604,8 @@ export function CoinVaultView() {
 
       {/* ============ CLOSE & COUNT MODAL (ADMIN) ============ */}
       {closeTarget && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 text-slate-100 shadow-2xl relative">
+        <div onClick={() => setCloseTarget(null)} className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div onClick={e => e.stopPropagation()} className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 text-slate-100 shadow-2xl relative">
             <button type="button" onClick={() => setCloseTarget(null)} className="absolute top-4 right-4 text-slate-400 hover:text-white">
               <X className="w-5 h-5" />
             </button>
@@ -627,19 +651,19 @@ export function CoinVaultView() {
         </div>
       )}
 
-      {/* ============ COMPENSATION MODAL (POWER OUTAGE) ============ */}
+      {/* ============ LOST-COIN MODAL (POWER OUTAGE / MACHINE FAULT) ============ */}
       {showCompModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 text-slate-100 shadow-2xl relative">
+        <div onClick={() => setShowCompModal(false)} className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div onClick={e => e.stopPropagation()} className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 text-slate-100 shadow-2xl relative">
             <button type="button" onClick={() => setShowCompModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white">
               <X className="w-5 h-5" />
             </button>
             <h3 className="text-base font-bold text-white mb-1 flex items-center gap-2">
               <Zap className="w-5 h-5 text-amber-400" />
-              Report Lost Coin & Issue Replacement
+              Report Lost Coins
             </h3>
             <p className="text-xs text-slate-400 mb-4">
-              Use this when power goes out mid-game (or a machine fault swallows the coin). The replacement coin you hand the customer is deducted from the float so the books balance.
+              Use this when power goes out mid-game (or a machine fault swallows the coin). The lost coins you re-issue to the customer are deducted from the float so the books balance.
             </p>
             <form onSubmit={handleCompensation} className="space-y-4">
               <div>
@@ -656,17 +680,23 @@ export function CoinVaultView() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">Game *</label>
-                  <input
-                    type="text"
+                  <select
                     required
-                    value={compGameName}
-                    onChange={e => setCompGameName(e.target.value)}
-                    placeholder="e.g. Car Racing"
+                    value={compGameId}
+                    onChange={e => handleCompGameSelect(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white focus:border-amber-500 outline-none"
-                  />
+                  >
+                    <option value="">-- Select coin game --</option>
+                    {coinGames.map(g => (
+                      <option key={g.id} value={g.id}>{g.name} ({g.coinsRequired} coins)</option>
+                    ))}
+                  </select>
+                  {coinGames.length === 0 && (
+                    <p className="text-[11px] text-rose-400 mt-1">No active coin games found. Ask an admin to add one in Games &amp; Pricing.</p>
+                  )}
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Replacement Coins *</label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Lost Coins *</label>
                   <input
                     type="number"
                     required
@@ -704,7 +734,7 @@ export function CoinVaultView() {
                 disabled={submittingComp}
                 className="w-full py-2.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition cursor-pointer"
               >
-                {submittingComp ? 'Recording...' : 'Record Replacement & Deduct from Float'}
+                {submittingComp ? 'Recording...' : 'Record Lost Coins & Deduct from Float'}
               </button>
             </form>
           </div>

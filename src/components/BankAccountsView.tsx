@@ -3,6 +3,7 @@ import { BankAccount } from '../types/index.ts';
 import { api } from '../lib/api.ts';
 import { formatLagosDateTime } from '../lib/utils.ts';
 import { Landmark, Save, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { NIGERIAN_BANKS, OTHER_BANK_OPTION } from '../lib/banks.ts';
 
 export function BankAccountsView() {
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
@@ -144,13 +145,29 @@ export function BankAccountsView() {
                 <div className="space-y-3 flex-1">
                   <div>
                     <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Bank Name *</label>
-                    <input
-                      type="text"
-                      value={f.bankName}
-                      onChange={e => updateForm(slot, 'bankName', e.target.value)}
-                      placeholder="e.g. GTBank / Opay / Zenith"
+                    <select
+                      value={NIGERIAN_BANKS.includes(f.bankName) ? f.bankName : (f.bankName ? OTHER_BANK_OPTION : '')}
+                      onChange={e => {
+                        const v = e.target.value;
+                        updateForm(slot, 'bankName', v === OTHER_BANK_OPTION ? '' : v);
+                      }}
                       className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm sm:text-xs text-white focus:border-violet-500 outline-none min-h-[42px]"
-                    />
+                    >
+                      <option value="">-- Select bank --</option>
+                      {NIGERIAN_BANKS.map(b => (
+                        <option key={b} value={b}>{b}</option>
+                      ))}
+                      <option value={OTHER_BANK_OPTION}>{OTHER_BANK_OPTION}</option>
+                    </select>
+                    {f.bankName !== '' && !NIGERIAN_BANKS.includes(f.bankName) && (
+                      <input
+                        type="text"
+                        value={f.bankName}
+                        onChange={e => updateForm(slot, 'bankName', e.target.value)}
+                        placeholder="Type bank name manually"
+                        className="mt-2 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm sm:text-xs text-white focus:border-violet-500 outline-none min-h-[42px]"
+                      />
+                    )}
                   </div>
                   <div>
                     <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Account Number *</label>

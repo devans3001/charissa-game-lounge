@@ -126,31 +126,10 @@ export function LoginView() {
             </button>
           </form>
 
-          {/* Administrator Login Credentials Card */}
-          <div className="mt-6 pt-5 border-t border-slate-800 space-y-2">
-            <div className="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800 text-left">
-              <div>
-                <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                  System Admin Login
-                </span>
-                <span className="text-xs font-mono text-slate-200">
-                  admin <span className="text-slate-500">/</span> AdminPass123!
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setUsername('admin');
-                  setPassword('AdminPass123!');
-                  setError(null);
-                }}
-                className="px-2.5 py-1 text-[11px] font-semibold bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30 border border-indigo-500/30 rounded-lg transition cursor-pointer"
-              >
-                Autofill
-              </button>
-            </div>
+          {/* Sign-in hint (no credentials exposed) */}
+          <div className="mt-6 pt-5 border-t border-slate-800">
             <p className="text-[11px] text-slate-400 text-center">
-              Cashiers sign in with their <span className="text-slate-200 font-semibold">name</span> (e.g. <span className="font-mono text-indigo-300">alvin</span>) or <span className="text-slate-200 font-semibold">phone number</span>, and default password is their phone number.
+              Contact your administrator for login details. Cashiers sign in with their <span className="text-slate-200 font-semibold">name</span> or <span className="text-slate-200 font-semibold">phone number</span>.
             </p>
           </div>
         </div>

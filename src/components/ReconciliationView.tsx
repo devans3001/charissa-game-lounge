@@ -487,8 +487,8 @@ export function ReconciliationView() {
 
       {/* Modal: Authorize Reopen */}
       {showReopenModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 text-slate-100 shadow-2xl">
+        <div onClick={() => setShowReopenModal(false)} className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div onClick={e => e.stopPropagation()} className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 text-slate-100 shadow-2xl">
             <div className="flex items-center gap-3 mb-4">
               <div className="p-2.5 bg-amber-500/20 text-amber-400 rounded-xl">
                 <Unlock className="w-5 h-5" />
