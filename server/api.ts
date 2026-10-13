@@ -756,6 +756,22 @@ api.post('/transactions/quick-coins', authenticate, async (req: AuthRequest, res
   const coinPrice = getCoinPriceKobo(db);
   const totalAmountKobo = coinCount * coinPrice;
 
+  // Hard guard: never sell coins the cashier does not physically hold.
+  // computeCoinBalance is a hoisted function declaration further down this file.
+  const balance = computeCoinBalance(db, req.user!.id, req.user!.name);
+  if (balance.expectedRemainingCoins <= 0) {
+    res.status(400).json({
+      error: 'You have no coins in your float. Ask the admin to allocate / top up coins before selling.',
+    });
+    return;
+  }
+  if (coinCount > balance.expectedRemainingCoins) {
+    res.status(400).json({
+      error: `Not enough coins in your float — only ${balance.expectedRemainingCoins} left. Reduce the count or ask the admin to top up.`,
+    });
+    return;
+  }
+
   const now = new Date();
   const businessDate = getLagosDateString(now);
 

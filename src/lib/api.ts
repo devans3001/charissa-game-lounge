@@ -384,7 +384,11 @@ export const api = {
           method: 'POST',
           body: JSON.stringify(data),
         }),
-      close: (id: string, data: { actualRemainingCoins: number; notes?: string }) =>
+    balances: {
+      get: () =>
+        request<{ balances: CashierCoinBalance[] }>('/api/coin-balances'),
+    },
+    close: (id: string, data: { actualRemainingCoins: number; notes?: string }) =>
         request<{ allocation: CoinAllocation; expectedRemainingCoins: number; discrepancyCoins: number }>(
           `/api/coin-allocations/${id}/close`,
           {

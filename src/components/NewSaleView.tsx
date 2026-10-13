@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Game, PaymentMethod, Transaction, GameCategory, CustomerTab, BankAccount } from '../types/index.ts';
+import { Game, PaymentMethod, Transaction, GameCategory, CustomerTab, BankAccount, CashierCoinBalance } from '../types/index.ts';
 import { api } from '../lib/api.ts';
 import { useAuth } from '../context/AuthContext.tsx';
 import { formatNaira, formatLagosDateTime } from '../lib/utils.ts';
@@ -84,8 +84,11 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
   // Quick coin sale (crowd mode): prepaid coins with no game named
   const [showQuickCoins, setShowQuickCoins] = useState(false);
   const [quickCoinCount, setQuickCoinCount] = useState('');
-  const [quickToken, setQuickToken] = useState('');
   const [quickSalePending, setQuickSalePending] = useState(false);
+  // Quick coin sale has its OWN payment capture so it never mixes with the cart checkout
+  const [quickPaymentMethod, setQuickPaymentMethod] = useState<PaymentMethod>('CASH');
+  const [quickPaymentReference, setQuickPaymentReference] = useState('');
+  const [quickSenderName, setQuickSenderName] = useState('');
 
   // Loading & Feedback
   const [savingTab, setSavingTab] = useState(false);
@@ -109,6 +112,8 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
     loadActiveTabs();
     loadCashierShiftStats();
     loadBankAccounts();
+    loadCashierCoinBalance();
+    loadSettings();
   }, []);
 
   const loadBankAccounts = async () => {
@@ -165,6 +170,34 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
       setShiftTotalKobo(stats.totalRevenueKobo);
     } catch (err) {
       console.error('Failed to load shift stats:', err);
+    }
+  };
+
+  // Coin float balance per cashier (allocated vs sold/voided/compensated)
+  const [cashierCoinBalance, setCashierCoinBalance] = useState<CashierCoinBalance | null>(null);
+  // Coins physically left in this cashier's float right now (drives guards + low-stock alert)
+  const coinsRemaining = cashierCoinBalance?.expectedRemainingCoins ?? 0;
+
+  // Global coin price (so the quick coin modal can show a live total)
+  const [coinPriceKobo, setCoinPriceKobo] = useState<number>(0);
+
+  const loadSettings = async () => {
+    try {
+      const res = await api.settings.get();
+      setCoinPriceKobo(res.settings.coinPriceKobo);
+    } catch (err) {
+      console.error('Failed to load settings:', err);
+    }
+  };
+
+  const loadCashierCoinBalance = async () => {
+    try {
+      const res = await api.coins.balances();
+      // First (and only) balance for the current cashier
+      const bal = res.balances.find((b: CashierCoinBalance) => b.cashierId === user?.id);
+      setCashierCoinBalance(bal ?? null);
+    } catch (err) {
+      console.error('Failed to load coin float balance:', err);
     }
   };
 
@@ -352,10 +385,35 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
   };
 
   // Quick prepaid coin sale (crowd mode) — no game named, instant cash/card after
+  const resetQuickCoins = () => {
+    setShowQuickCoins(false);
+    setQuickCoinCount('');
+    setQuickPaymentReference('');
+    setQuickSenderName('');
+    setQuickSalePending(false);
+    setError(null);
+  };
+
+  // Quick prepaid coin sale (crowd mode) — no game named, payment captured inside the modal
   const handleQuickCoinSale = async () => {
     const count = parseInt(quickCoinCount, 10);
     if (!Number.isFinite(count) || count < 1 || count > 50) {
       setError('Coin count must be a whole number between 1 and 50.');
+      return;
+    }
+
+    if (quickPaymentMethod === 'BANK_TRANSFER' && !quickSenderName.trim()) {
+      setError('Sender full name is required to verify a bank transfer.');
+      return;
+    }
+
+    // Hard guard: never sell coins the cashier does not physically hold
+    if (coinsRemaining <= 0) {
+      setError('You have no coins in your float. Ask the admin to allocate / top up coins before selling.');
+      return;
+    }
+    if (count > coinsRemaining) {
+      setError(`Not enough coins in your float — only ${coinsRemaining} left. Reduce the count or ask the admin to top up.`);
       return;
     }
 
@@ -365,22 +423,17 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
     try {
       const res = await api.transactions.quickCoins({
         coins: count,
-        paymentMethod: paymentMethod,
-        paymentReference: paymentReference.trim() || undefined,
-        senderName: paymentMethod === 'BANK_TRANSFER' ? senderName.trim() : undefined,
+        paymentMethod: quickPaymentMethod,
+        paymentReference: quickPaymentReference.trim() || undefined,
+        senderName: quickPaymentMethod === 'BANK_TRANSFER' ? quickSenderName.trim() : undefined,
       });
 
-      // Refresh shift stats from the newly recorded sale
+      // Refresh shift stats + coin float from the newly recorded sale
       await loadCashierShiftStats();
+      await loadCashierCoinBalance();
 
-      // Return to draft / clear the quick-sale form
-      setShowQuickCoins(false);
-      setQuickCoinCount('');
-      setQuickToken('');
-      setQuickSalePending(false);
-
-      // Persist a neutral success message (front-end; audit log is on the server)
       setSuccessToast(`Sold ${count} prepaid coins for ${formatNaira(res.transaction.totalAmountKobo)}.`);
+      resetQuickCoins();
     } catch (err: any) {
       setError(err.message || 'Quick coin sale failed');
       setQuickSalePending(false);
@@ -485,6 +538,9 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
     return true;
   });
 
+  // Live total for the quick coin sale modal
+  const quickTotalKobo = (parseInt(quickCoinCount, 10) || 0) * coinPriceKobo;
+
   // Calculate change for cash payment
   const numericTendered = parseFloat(amountTendered) || 0;
   const tenderedKobo = Math.round(numericTendered * 100);
@@ -532,6 +588,40 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
           </div>
         </div>
       </div>
+
+      {/* =========================================================================
+          LOW COIN STOCK ALERT — sticky until the admin tops up the float
+         ========================================================================= */}
+      {cashierCoinBalance !== null && coinsRemaining < 50 && (
+        <div
+          className={`sticky top-2 z-40 rounded-2xl border p-3.5 flex items-center gap-3 shadow-lg backdrop-blur-sm ${
+            coinsRemaining <= 0
+              ? 'bg-red-950/80 border-red-700 text-red-100 shadow-red-950/50'
+              : 'bg-amber-950/75 border-amber-700/70 text-amber-100 shadow-amber-950/50'
+          }`}
+        >
+          <AlertCircle
+            className={`w-5 h-5 shrink-0 ${coinsRemaining <= 0 ? 'text-red-400' : 'text-amber-400'}`}
+          />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-bold">
+              {coinsRemaining <= 0
+                ? 'Out of coins — coin sales are blocked'
+                : `Low coin stock: ${coinsRemaining} coins left in your float`}
+            </p>
+            <p className="text-[11px] opacity-85">
+              Notify the admin to allocate / top up your coin float. This alert stays until the coins are topped up.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={loadCashierCoinBalance}
+            className="shrink-0 px-3 py-1.5 rounded-lg border border-current text-[11px] font-semibold hover:bg-white/10 transition cursor-pointer"
+          >
+            Refresh
+          </button>
+        </div>
+      )}
 
       {/* =========================================================================
           ACTIVE CUSTOMER TABS STRIP (Open Entries / Up to 20+ Customers at Once)
@@ -902,7 +992,7 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
                       className="py-3 px-3 rounded-xl bg-amber-600/20 hover:bg-amber-600/30 active:bg-amber-600/40 text-amber-300 font-semibold text-xs flex items-center justify-center gap-2 border border-amber-500/30 transition cursor-pointer shadow-sm"
                     >
                       <Coins className="w-4 h-4" />
-                      Quick Coin Sale (cash/card after)
+                      Quick Coin Sale
                     </button>
 
                     {/* Action 2: Proceed to Checkout / Payment */}
@@ -1153,104 +1243,271 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
             QUICK COIN SALE PANEL (crowd mode — prepaid coins, no game named)
            ========================================================================= */}
         {showQuickCoins && (
-          <div className="lg:col-span-7 space-y-4">
-            <div className="bg-slate-900 border border-amber-500/30 rounded-2xl p-4 sm:p-6">
-              <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div
+            onClick={resetQuickCoins}
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              className="bg-slate-900 border border-amber-500/30 rounded-2xl max-w-md w-full p-6 shadow-2xl relative text-slate-100 space-y-4 max-h-[90vh] overflow-y-auto"
+            >
+              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
                 <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-md bg-amber-500/20 text-amber-400 flex items-center justify-center text-xs font-bold">
-                    7
-                  </div>
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400">
-                    Quick Coin Sale — Prepaid Coins
-                  </h3>
+                  <Coins className="w-5 h-5 text-amber-400" />
+                  <h3 className="font-bold text-white text-base">Quick Coin Sale</h3>
                   <span className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
                     Crowd Mode
                   </span>
                 </div>
                 <button
                   type="button"
-                  onClick={() => {
-                    setShowQuickCoins(false);
-                    setQuickCoinCount('');
-                    setQuickToken('');
-                    setQuickSalePending(false);
-                    setError(null);
-                  }}
-                  className="text-xs text-slate-400 hover:text-white cursor-pointer"
+                  onClick={resetQuickCoins}
+                  className="text-slate-400 hover:text-white cursor-pointer"
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-5 h-5" />
                 </button>
               </div>
 
-              <div className="space-y-4">
+              {/* Coin float remaining */}
+              <div
+                className={`p-3 rounded-xl border flex items-center justify-between gap-3 ${
+                  coinsRemaining <= 0
+                    ? 'bg-red-950/40 border-red-800/60'
+                    : coinsRemaining < 50
+                      ? 'bg-amber-950/30 border-amber-700/50'
+                      : 'bg-slate-950 border-slate-800'
+                }`}
+              >
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                    Prepaid Coin Count <span className="text-red-400">*</span>
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="50"
-                    required
-                    value={quickCoinCount}
-                    onChange={e => setQuickCoinCount(e.target.value)}
-                    placeholder="e.g. 10"
-                    className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 outline-none"
-                  />
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    Max 50 coins per quick sale. No game selected — customer pays instantly for N coins.
-                  </p>
+                  <span className="block text-[11px] uppercase tracking-wider text-slate-400">
+                    Coins in your float
+                  </span>
+                  <span
+                    className={`text-lg font-bold font-mono ${
+                      coinsRemaining <= 0 ? 'text-red-400' : coinsRemaining < 50 ? 'text-amber-400' : 'text-white'
+                    }`}
+                  >
+                    {coinsRemaining} coins
+                  </span>
                 </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                    Token / OTP <span className="text-slate-400">(optional)</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={quickToken}
-                    onChange={e => setQuickToken(e.target.value)}
-                    placeholder="Coupon code, gift card code, etc."
-                    className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
-                  />
-                </div>
-
-                {error && quickSalePending === false && (
-                  <div className="p-3 rounded-xl bg-red-950/40 border border-red-800/50 text-red-200 text-xs">
-                    {error}
-                  </div>
+                {coinsRemaining < 50 && (
+                  <span className="text-[11px] text-amber-300 font-semibold text-right">
+                    Low stock — ask admin
+                    <br />
+                    to top up coins
+                  </span>
                 )}
               </div>
 
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={handleQuickCoinSale}
-                  disabled={quickSalePending || !quickCoinCount.trim()}
-                  className="flex-1 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white font-bold text-sm flex items-center justify-center gap-2 transition cursor-pointer"
-                >
-                  {quickSalePending ? (
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <>
-                      <Coins className="w-4 h-4" />
-                      Sell {quickCoinCount.trim() || '?'} Coins
-                    </>
+              {/* Quick preset amounts */}
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-300 mb-1.5">
+                  Coin count <span className="text-red-400">*</span>
+                </label>
+                <div className="grid grid-cols-4 gap-2 mb-2">
+                  {[5, 10, 20, 50].map(n => (
+                    <button
+                      key={n}
+                      type="button"
+                      disabled={quickSalePending}
+                      onClick={() => setQuickCoinCount(String(n))}
+                      className={`py-2.5 rounded-xl border text-sm font-bold transition cursor-pointer disabled:opacity-40 ${
+                        quickCoinCount === String(n)
+                          ? 'bg-amber-600/25 border-amber-500 text-amber-200 ring-1 ring-amber-500/50'
+                          : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-amber-600/60 hover:text-amber-300'
+                      }`}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="number"
+                  min="1"
+                  max="50"
+                  value={quickCoinCount}
+                  onChange={e => setQuickCoinCount(e.target.value)}
+                  placeholder="Or type a custom amount (1–50)"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 outline-none"
+                />
+              </div>
+
+              {/* Payment method */}
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-300 mb-1.5">
+                  Payment method <span className="text-red-400">*</span>
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setQuickPaymentMethod('CASH')}
+                    className={`p-2.5 rounded-xl border text-center transition cursor-pointer ${
+                      quickPaymentMethod === 'CASH'
+                        ? 'bg-emerald-600/20 border-emerald-500 text-white font-bold'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <Banknote className="w-4 h-4 mx-auto mb-1 text-emerald-400" />
+                    <span className="text-xs">Cash</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setQuickPaymentMethod('POS')}
+                    className={`p-2.5 rounded-xl border text-center transition cursor-pointer ${
+                      quickPaymentMethod === 'POS'
+                        ? 'bg-indigo-600/20 border-indigo-500 text-white font-bold'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <CreditCard className="w-4 h-4 mx-auto mb-1 text-indigo-400" />
+                    <span className="text-xs">POS / Card</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setQuickPaymentMethod('BANK_TRANSFER')}
+                    className={`p-2.5 rounded-xl border text-center transition cursor-pointer ${
+                      quickPaymentMethod === 'BANK_TRANSFER'
+                        ? 'bg-violet-600/20 border-violet-500 text-white font-bold'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <SendHorizontal className="w-4 h-4 mx-auto mb-1 text-violet-400" />
+                    <span className="text-xs">Transfer</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* POS reference */}
+              {quickPaymentMethod === 'POS' && (
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                    POS Slip RRN / Auth Code (Recommended)
+                  </label>
+                  <input
+                    type="text"
+                    value={quickPaymentReference}
+                    onChange={e => setQuickPaymentReference(e.target.value)}
+                    placeholder="e.g. POS-SLIP-9923 or 008129"
+                    className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-white placeholder-slate-500 focus:border-indigo-400 outline-none"
+                  />
+                </div>
+              )}
+
+              {/* Bank transfer requirements */}
+              {quickPaymentMethod === 'BANK_TRANSFER' && (
+                <div className="space-y-2.5 p-3 rounded-lg bg-violet-950/30 border border-violet-800/50">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-violet-200 mb-1">
+                      Sender Full Name (as shown in bank alert) <span className="text-red-400">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={quickSenderName}
+                      onChange={e => setQuickSenderName(e.target.value)}
+                      placeholder="e.g. John Kelechi Okafor"
+                      className="w-full rounded-lg border border-violet-800 bg-slate-950 px-3 py-2 text-xs text-white placeholder-slate-500 focus:border-violet-400 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                      Transfer Ref / Session ID (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={quickPaymentReference}
+                      onChange={e => setQuickPaymentReference(e.target.value)}
+                      placeholder="e.g. GTBank / 09283719"
+                      className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:border-violet-400 outline-none"
+                    />
+                  </div>
+
+                  {bankAccounts.length > 0 && (
+                    <div className="pt-2 border-t border-violet-800/40">
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <Landmark className="w-3.5 h-3.5 text-violet-300" />
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-violet-200">
+                          Show the customer these accounts
+                        </span>
+                      </div>
+                      <div className="space-y-2">
+                        {bankAccounts.map(acc => (
+                          <div
+                            key={acc.id}
+                            className="flex items-center justify-between gap-2 bg-slate-950 border border-violet-900/50 rounded-lg px-3 py-2"
+                          >
+                            <div className="min-w-0">
+                              <div className="text-xs font-semibold text-white truncate">
+                                {acc.bankName}
+                                {acc.label && <span className="text-[10px] text-violet-300 ml-1.5">({acc.label})</span>}
+                              </div>
+                              <div className="text-[11px] text-slate-400 font-mono truncate">
+                                {acc.accountNumber} · {acc.accountName}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleCopyAccountNumber(acc.accountNumber)}
+                              className="shrink-0 p-1.5 rounded-lg bg-violet-600/20 hover:bg-violet-600/40 text-violet-200 transition cursor-pointer"
+                              title="Copy account number"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowQuickCoins(false);
-                    setQuickCoinCount('');
-                    setQuickToken('');
-                    setQuickSalePending(false);
-                    setError(null);
-                  }}
-                  className="px-4 py-2.5 rounded-xl border border-slate-800 text-slate-400 hover:text-white text-sm font-semibold transition cursor-pointer"
-                >
-                  Cancel
-                </button>
+                  {bankAccounts.length === 0 && (
+                    <div className="pt-2 border-t border-violet-800/40 text-[11px] text-violet-300/70">
+                      No bank accounts configured yet — ask the admin to add them under "Transfer Accounts".
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {error && (
+                <div className="p-3 rounded-xl bg-red-950/40 border border-red-800/50 text-red-200 text-xs">
+                  {error}
+                </div>
+              )}
+
+              {/* Live total + submit */}
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-xs text-slate-400">
+                  Total due
+                  <span className="block text-lg font-bold text-amber-400 font-mono">
+                    {formatNaira(quickTotalKobo)}
+                  </span>
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={resetQuickCoins}
+                    className="px-4 py-2.5 rounded-xl border border-slate-800 text-slate-400 hover:text-white text-sm font-semibold transition cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleQuickCoinSale}
+                    disabled={
+                      quickSalePending ||
+                      !quickCoinCount.trim() ||
+                      coinsRemaining <= 0 ||
+                      (parseInt(quickCoinCount, 10) || 0) > coinsRemaining
+                    }
+                    className="py-2.5 px-4 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white font-bold text-sm flex items-center justify-center gap-2 transition cursor-pointer"
+                  >
+                    {quickSalePending ? (
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <>
+                        <Coins className="w-4 h-4" />
+                        Sell {quickCoinCount.trim() || '?'} Coins
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
