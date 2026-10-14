@@ -12,6 +12,9 @@ import { AuditLogsView } from './components/AuditLogsView.tsx';
 import { CorrectionRequestsView } from './components/CorrectionRequestsView.tsx';
 import { CoinVaultView } from './components/CoinVaultView.tsx';
 import { BankAccountsView } from './components/BankAccountsView.tsx';
+import { GameBootLoadingScreen } from './components/game-ui/index.ts';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { queryClient } from './lib/queryClient.ts';
 
 function MainApp() {
   const { user, isLoading } = useAuth();
@@ -26,14 +29,14 @@ function MainApp() {
     }
   }, [user?.role]);
 
-  if (isLoading) {
+  const [bootComplete, setBootComplete] = useState<boolean>(false);
+
+  if (isLoading || !bootComplete) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-          <span className="text-xs font-mono">Initializing Game Lounge System...</span>
-        </div>
-      </div>
+      <GameBootLoadingScreen
+        minDurationMs={1600}
+        onComplete={() => setBootComplete(true)}
+      />
     );
   }
 
@@ -69,8 +72,10 @@ function MainApp() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <MainApp />
-    </AuthProvider>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <MainApp />
+      </AuthProvider>
+    </QueryClientProvider>
   );
 }

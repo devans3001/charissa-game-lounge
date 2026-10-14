@@ -13,6 +13,7 @@ import {
   getDocs,
   collection,
   runTransaction,
+  setLogLevel,
 } from 'firebase/firestore';
 import {
   User,
@@ -120,6 +121,27 @@ export function getFirestore(): Firestore {
   if (fs.existsSync(cfgPath)) {
     const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
     const app = getApps().length === 0 ? initializeApp(cfg) : getApp();
+    try {
+      setLogLevel('error');
+    } catch {
+      // ignore
+    }
+    // Filter benign gRPC idle stream disconnection messages from console.warn/error
+    const isIdleStreamMsg = (args: any[]) => {
+      const text = args.map(a => (typeof a === 'string' ? a : a?.message || '')).join(' ');
+      return text.includes('Disconnecting idle stream') || text.includes('Timed out waiting for new targets');
+    };
+    const origWarn = console.warn;
+    console.warn = (...args: any[]) => {
+      if (isIdleStreamMsg(args)) return;
+      origWarn.apply(console, args);
+    };
+    const origError = console.error;
+    console.error = (...args: any[]) => {
+      if (isIdleStreamMsg(args)) return;
+      origError.apply(console, args);
+    };
+
     firestoreInstance = initializeFirestore(app, { ignoreUndefinedProperties: true }, cfg.firestoreDatabaseId);
     return firestoreInstance;
   }

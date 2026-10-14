@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { Transaction, PaymentMethod, GameCategory, TransactionStatus, CorrectionRequest } from '../types/index.ts';
 import { api } from '../lib/api.ts';
 import { formatNaira, formatLagosDateTime, formatLagosDate } from '../lib/utils.ts';
 import { useAuth } from '../context/AuthContext.tsx';
+import { queryClient, queryKeys } from '../lib/queryClient.ts';
 import {
   Search,
   Filter,
@@ -25,6 +27,7 @@ import {
   BookmarkCheck,
   Clock3
 } from 'lucide-react';
+import { GameTableSkeleton, GameInlineLoader, GameDataLoadingOverlay } from './game-ui/index.ts';
 
 interface TransactionsViewProps {
   onNavigateToFixRequests?: () => void;
@@ -32,16 +35,9 @@ interface TransactionsViewProps {
 
 export function TransactionsView({ onNavigateToFixRequests }: TransactionsViewProps = {}) {
   const { user } = useAuth();
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [total, setTotal] = useState<number>(0);
   const [page, setPage] = useState<number>(1);
-  const [totalPages, setTotalPages] = useState<number>(1);
-  const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [successToast, setSuccessToast] = useState<string | null>(null);
-
-  // Correction requests (cashier "Flag Fix" submissions) so the ledger can show flag state
-  const [correctionRequests, setCorrectionRequests] = useState<CorrectionRequest[]>([]);
 
   const showToast = (msg: string) => {
     setSuccessToast(msg);
@@ -122,7 +118,6 @@ export function TransactionsView({ onNavigateToFixRequests }: TransactionsViewPr
   const [selectedTxn, setSelectedTxn] = useState<Transaction | null>(null);
   const [voidModalTxn, setVoidModalTxn] = useState<Transaction | null>(null);
   const [voidReason, setVoidReason] = useState<string>('');
-  const [voiding, setVoiding] = useState<boolean>(false);
   // COIN_GAME voids only: were the physical coins handed back into the drawer?
   const [voidCoinsReturned, setVoidCoinsReturned] = useState<boolean | null>(null);
 
@@ -130,31 +125,32 @@ export function TransactionsView({ onNavigateToFixRequests }: TransactionsViewPr
   const [correctReason, setCorrectReason] = useState<string>('');
   const [correctMethod, setCorrectMethod] = useState<PaymentMethod>('CASH');
   const [correctRef, setCorrectRef] = useState<string>('');
-  const [correcting, setCorrecting] = useState<boolean>(false);
 
   // Cashier Request Correction modal
   const [requestModalTxn, setRequestModalTxn] = useState<Transaction | null>(null);
   const [requestReason, setRequestReason] = useState<string>('');
   const [requestAction, setRequestAction] = useState<'VOID' | 'CHANGE_PAYMENT_METHOD'>('VOID');
   const [requestMethod, setRequestMethod] = useState<PaymentMethod>('POS');
-  const [requesting, setRequesting] = useState<boolean>(false);
 
-  useEffect(() => {
-    loadTransactions();
-    loadCorrectionRequests();
-  }, [page, category, paymentMethod, status, startDate, endDate, sort]);
-
-  useEffect(() => {
-    if (!successToast) return;
-    const timer = setTimeout(() => setSuccessToast(null), 4500);
-    return () => clearTimeout(timer);
-  }, [successToast]);
-
-  const loadTransactions = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const res = await api.transactions.list({
+  // TanStack Queries
+  const {
+    data: txnData,
+    isLoading: loading,
+    refetch: loadTransactions,
+  } = useQuery({
+    queryKey: queryKeys.transactions({
+      page,
+      limit: 20,
+      search,
+      category,
+      paymentMethod,
+      status,
+      startDate,
+      endDate,
+      sort,
+    }),
+    queryFn: () =>
+      api.transactions.list({
         page,
         limit: 20,
         search,
@@ -164,25 +160,113 @@ export function TransactionsView({ onNavigateToFixRequests }: TransactionsViewPr
         startDate,
         endDate,
         sort,
-      });
-      setTransactions(res.transactions);
-      setTotal(res.total);
-      setTotalPages(res.totalPages || 1);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load transaction ledger');
-    } finally {
-      setLoading(false);
-    }
-  };
+      }),
+    refetchInterval: 12_000,
+  });
 
-  const loadCorrectionRequests = async () => {
-    try {
-      const res = await api.correctionRequests.list();
-      setCorrectionRequests(res.requests);
-    } catch (err) {
-      console.error('Failed to load correction requests:', err);
-    }
-  };
+  const transactions = txnData?.transactions || [];
+  const total = txnData?.total || 0;
+  const totalPages = txnData?.totalPages || 1;
+
+  const { data: reqData } = useQuery({
+    queryKey: queryKeys.correctionRequests(),
+    queryFn: () => api.correctionRequests.list(),
+    refetchInterval: 12_000,
+  });
+  const correctionRequests = reqData?.requests || [];
+
+  // TanStack Mutations with query invalidation
+  const voidMutation = useMutation({
+    mutationFn: async ({ txnId, reason, returnCoinsToCashier }: { txnId: string; reason: string; returnCoinsToCashier?: boolean }) => {
+      return api.transactions.void(txnId, reason, returnCoinsToCashier);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['coinBalances'] });
+      queryClient.invalidateQueries({ queryKey: ['reconciliation'] });
+      const returned = voidCoinsReturned === true;
+      const coins = coinCountOf(voidModalTxn);
+      showToast(
+        isCoinTxn(voidModalTxn)
+          ? `Sale voided — ${coins} coin(s) ${returned ? 'returned to the cashier' : 'kept deducted (lost)'} float.`
+          : 'Sale voided. It is removed from revenue totals but kept in the audit trail.'
+      );
+      setVoidModalTxn(null);
+      setVoidReason('');
+      setVoidCoinsReturned(null);
+    },
+    onError: (err: any) => {
+      setError(err.message || 'Failed to void transaction');
+    },
+  });
+
+  const correctMutation = useMutation({
+    mutationFn: async ({
+      txnId,
+      reason,
+      paymentMethod,
+      paymentReference,
+    }: {
+      txnId: string;
+      reason: string;
+      paymentMethod: PaymentMethod;
+      paymentReference?: string;
+    }) => {
+      return api.transactions.correct(txnId, { reason, paymentMethod, paymentReference });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['reconciliation'] });
+      setCorrectModalTxn(null);
+      setCorrectReason('');
+      showToast('Transaction correction recorded successfully.');
+    },
+    onError: (err: any) => {
+      setError(err.message || 'Failed to correct transaction');
+    },
+  });
+
+  const requestCorrectionMutation = useMutation({
+    mutationFn: async ({
+      txnId,
+      reason,
+      requestedAction,
+      proposedPaymentMethod,
+    }: {
+      txnId: string;
+      reason: string;
+      requestedAction: 'VOID' | 'CHANGE_PAYMENT_METHOD';
+      proposedPaymentMethod?: PaymentMethod;
+    }) => {
+      return api.transactions.requestCorrection(txnId, {
+        reason,
+        requestedAction,
+        proposedPaymentMethod,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['correctionRequests'] });
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      setRequestModalTxn(null);
+      setRequestReason('');
+      showToast('Fix request sent to the manager/admin for review. The ledger now shows it as flagged.');
+    },
+    onError: (err: any) => {
+      setError(err.message || 'Failed to submit correction request');
+    },
+  });
+
+  const voiding = voidMutation.isPending;
+  const correcting = correctMutation.isPending;
+  const requesting = requestCorrectionMutation.isPending;
+
+  useEffect(() => {
+    if (!successToast) return;
+    const timer = setTimeout(() => setSuccessToast(null), 4500);
+    return () => clearTimeout(timer);
+  }, [successToast]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -231,30 +315,12 @@ export function TransactionsView({ onNavigateToFixRequests }: TransactionsViewPr
       return;
     }
 
-    try {
-      setVoiding(true);
-      setError(null);
-      await api.transactions.void(
-        voidModalTxn.id,
-        voidReason.trim(),
-        isCoinTxn(voidModalTxn) ? voidCoinsReturned === true : undefined
-      );
-      const returned = voidCoinsReturned === true;
-      const coins = coinCountOf(voidModalTxn);
-      showToast(
-        isCoinTxn(voidModalTxn)
-          ? `Sale voided — ${coins} coin(s) ${returned ? 'returned to the cashier' : 'kept deducted (lost)'} float.`
-          : 'Sale voided. It is removed from revenue totals but kept in the audit trail.'
-      );
-      setVoidModalTxn(null);
-      setVoidReason('');
-      setVoidCoinsReturned(null);
-      loadTransactions();
-    } catch (err: any) {
-      setError(err.message || 'Failed to void transaction');
-    } finally {
-      setVoiding(false);
-    }
+    setError(null);
+    voidMutation.mutate({
+      txnId: voidModalTxn.id,
+      reason: voidReason.trim(),
+      returnCoinsToCashier: isCoinTxn(voidModalTxn) ? voidCoinsReturned === true : undefined,
+    });
   };
 
   // Correction submission
@@ -265,22 +331,13 @@ export function TransactionsView({ onNavigateToFixRequests }: TransactionsViewPr
       return;
     }
 
-    try {
-      setCorrecting(true);
-      setError(null);
-      await api.transactions.correct(correctModalTxn.id, {
-        reason: correctReason.trim(),
-        paymentMethod: correctMethod,
-        paymentReference: correctRef.trim(),
-      });
-      setCorrectModalTxn(null);
-      setCorrectReason('');
-      loadTransactions();
-    } catch (err: any) {
-      setError(err.message || 'Failed to correct transaction');
-    } finally {
-      setCorrecting(false);
-    }
+    setError(null);
+    correctMutation.mutate({
+      txnId: correctModalTxn.id,
+      reason: correctReason.trim(),
+      paymentMethod: correctMethod,
+      paymentReference: correctRef.trim(),
+    });
   };
 
   // Cashier request correction submission
@@ -291,23 +348,13 @@ export function TransactionsView({ onNavigateToFixRequests }: TransactionsViewPr
       return;
     }
 
-    try {
-      setRequesting(true);
-      setError(null);
-      await api.transactions.requestCorrection(requestModalTxn.id, {
-        reason: requestReason.trim(),
-        requestedAction: requestAction,
-        proposedPaymentMethod: requestAction === 'CHANGE_PAYMENT_METHOD' ? requestMethod : undefined,
-      });
-      setRequestModalTxn(null);
-      setRequestReason('');
-      showToast('Fix request sent to the manager/admin for review. The ledger now shows it as flagged.');
-      await loadCorrectionRequests();
-    } catch (err: any) {
-      setError(err.message || 'Failed to submit correction request');
-    } finally {
-      setRequesting(false);
-    }
+    setError(null);
+    requestCorrectionMutation.mutate({
+      txnId: requestModalTxn.id,
+      reason: requestReason.trim(),
+      requestedAction: requestAction,
+      proposedPaymentMethod: requestAction === 'CHANGE_PAYMENT_METHOD' ? requestMethod : undefined,
+    });
   };
 
   const activeFiltersCount = [
@@ -355,6 +402,12 @@ export function TransactionsView({ onNavigateToFixRequests }: TransactionsViewPr
         </div>
 
         <div className="flex items-center gap-2.5 flex-wrap">
+          {loading && (
+            <div className="px-2.5 py-1 bg-indigo-950/60 border border-indigo-900/60 rounded-lg text-indigo-300">
+              <GameInlineLoader label="QUERYING ARCHIVE..." variant="pulse" />
+            </div>
+          )}
+
           {/* Card / Table View Toggle for responsive flexibility */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-0.5 flex items-center">
             <button
@@ -547,7 +600,15 @@ export function TransactionsView({ onNavigateToFixRequests }: TransactionsViewPr
       </div>
 
       {/* Main Ledger Content: Dual Presentation (Cards on mobile or explicit CARD mode, Table on md+ or explicit TABLE mode) */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden print-card">
+      {loading && transactions.length === 0 ? (
+        <GameTableSkeleton
+          rows={8}
+          cols={6}
+          title={user?.role === 'ADMIN' ? 'STREAMING ALL-TRANSACTIONS ARCHIVE' : 'STREAMING MY SHIFT LEDGER'}
+          subtitle="Querying receipt numbers, Lagos timestamps, payment methods, and cashier IDs..."
+        />
+      ) : (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden print-card">
         {/* =========================================================================
             RESPONSIVE CARDS VIEW (Clean & touch-ergonomic on mobile / smaller viewports)
            ========================================================================= */}
@@ -880,6 +941,7 @@ export function TransactionsView({ onNavigateToFixRequests }: TransactionsViewPr
           </div>
         </div>
       </div>
+      )}
 
       {/* Transaction Details Modal */}
       {selectedTxn && (
@@ -1242,6 +1304,26 @@ export function TransactionsView({ onNavigateToFixRequests }: TransactionsViewPr
             </form>
           </div>
         </div>
+      )}
+
+      {/* Game-like HUD async operation overlays */}
+      {voiding && (
+        <GameDataLoadingOverlay
+          label="VOIDING FINANCIAL TRANSACTION..."
+          sublabel="Applying manager void override, restoring coin float, and auditing..."
+        />
+      )}
+      {correcting && (
+        <GameDataLoadingOverlay
+          label="CORRECTING TRANSACTION LEDGER..."
+          sublabel="Updating payment channel and appending manager audit record..."
+        />
+      )}
+      {requesting && (
+        <GameDataLoadingOverlay
+          label="DISPATCHING FLAG FIX TICKET..."
+          sublabel="Notifying Admin audit queue and tagging transaction..."
+        />
       )}
     </div>
   );

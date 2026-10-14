@@ -17,6 +17,7 @@ import {
   LayoutGrid,
   List
 } from 'lucide-react';
+import { GameTableSkeleton, GameInlineLoader } from './game-ui/index.ts';
 
 export function AuditLogsView() {
   const [logs, setLogs] = useState<AuditLog[]>([]);
@@ -84,8 +85,15 @@ export function AuditLogsView() {
           </p>
         </div>
 
-        {/* View Toggle */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-0.5 flex items-center self-start sm:self-auto">
+        <div className="flex items-center gap-2.5">
+          {loading && (
+            <div className="px-2.5 py-1 bg-indigo-950/60 border border-indigo-900/60 rounded-lg text-indigo-300">
+              <GameInlineLoader label="POLLING RECORDER..." variant="pulse" />
+            </div>
+          )}
+
+          {/* View Toggle */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-0.5 flex items-center self-start sm:self-auto">
           <button
             type="button"
             onClick={() => setViewMode(viewMode === 'CARD' ? 'AUTO' : 'CARD')}
@@ -106,6 +114,7 @@ export function AuditLogsView() {
             <List className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Table</span>
           </button>
+        </div>
         </div>
       </div>
 
@@ -186,7 +195,15 @@ export function AuditLogsView() {
       </div>
 
       {/* Main Logs Container: Dual Presentation */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+      {loading && logs.length === 0 ? (
+        <GameTableSkeleton
+          rows={8}
+          cols={5}
+          title="QUERYING SYSTEM SECURITY AUDIT STREAM"
+          subtitle="Streaming immutable write logs, actor keys, and forensic snapshots..."
+        />
+      ) : (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
         {/* RESPONSIVE CARDS VIEW (Mobile < md: or explicit CARD mode) */}
         <div className={`${viewMode === 'TABLE' ? 'hidden' : viewMode === 'CARD' ? 'block' : 'block md:hidden'} divide-y divide-slate-800/80 p-3 sm:p-4 space-y-3`}>
           {logs.map(log => (
@@ -327,6 +344,7 @@ export function AuditLogsView() {
           </div>
         </div>
       </div>
+      )}
 
       {/* Log Payload Details Modal */}
       {selectedLog && (

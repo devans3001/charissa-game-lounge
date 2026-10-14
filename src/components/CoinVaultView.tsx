@@ -13,6 +13,7 @@ import {
   X,
   History
 } from 'lucide-react';
+import { GameCardSkeleton, GameTableSkeleton, GameDataLoadingOverlay, GameInlineLoader } from './game-ui/index.ts';
 
 function getTodayLagos(): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -266,9 +267,14 @@ export function CoinVaultView() {
       )}
 
       {loading ? (
-        <div className="p-12 flex items-center justify-center text-slate-400 text-xs font-mono">
-          <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin mr-3" />
-          Loading coin vault...
+        <div className="space-y-6">
+          <GameCardSkeleton count={3} columns="grid-cols-1 md:grid-cols-2 lg:grid-cols-3" />
+          <GameTableSkeleton
+            rows={5}
+            cols={5}
+            title="AUDITING PHYSICAL COIN VAULT FLOAT"
+            subtitle="Syncing token hoppers, allocations, sales deductions, and lost token logs..."
+          />
         </div>
       ) : (
         <>
@@ -745,6 +751,26 @@ export function CoinVaultView() {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Game-like HUD async operation overlays */}
+      {submittingAllocate && (
+        <GameDataLoadingOverlay
+          label="DISPENSING FLOAT COINS TO CASHIER..."
+          sublabel="Incrementing cashier drawer balance and logging manager allocation..."
+        />
+      )}
+      {submittingClose && (
+        <GameDataLoadingOverlay
+          label="AUDITING SHIFT COIN RECONCILIATION..."
+          sublabel="Calculating physical vs expected coin variance and locking float..."
+        />
+      )}
+      {submittingComp && (
+        <GameDataLoadingOverlay
+          label="RECORDING LOST COIN INCIDENT..."
+          sublabel="Auditing machine outage coin replacement and updating drawer balance..."
+        />
       )}
     </div>
   );

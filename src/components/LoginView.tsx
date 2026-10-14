@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext.tsx';
 import { api } from '../lib/api.ts';
 import { Gamepad2, ShieldCheck, KeyRound, User, Lock, AlertCircle } from 'lucide-react';
+import { GameInlineLoader, GameDataLoadingOverlay } from './game-ui/index.ts';
 
 export function LoginView() {
   const { login } = useAuth();
@@ -116,7 +117,7 @@ export function LoginView() {
               className="w-full mt-2 flex justify-center items-center gap-2 py-3 px-4 border border-transparent rounded-xl text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 transition shadow-lg shadow-indigo-600/25 cursor-pointer"
             >
               {loading ? (
-                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                <GameInlineLoader label="AUTHENTICATING OPERATOR..." color="#ffffff" variant="pulse" />
               ) : (
                 <>
                   <KeyRound className="w-4 h-4" />
@@ -134,10 +135,17 @@ export function LoginView() {
           </div>
         </div>
 
-        <div className="mt-6 text-center text-xs text-slate-500">
+        <div className="mt-6 text-center text-xs text-slate-500 font-mono">
           Game Lounge Revenue & Audit System · Africa/Lagos Timezone
         </div>
       </div>
+
+      {loading && (
+        <GameDataLoadingOverlay
+          label="AUTHENTICATING OPERATOR KEY..."
+          sublabel="Verifying credentials and loading cashier station permissions..."
+        />
+      )}
     </div>
   );
 }

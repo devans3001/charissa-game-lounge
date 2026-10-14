@@ -16,6 +16,82 @@
   }
 }
 
+.font-arcade {
+  font-family: 'Press Start 2P', monospace;
+}
+
+.font-cyber {
+  font-family: 'Chakra Petch', 'JetBrains Mono', sans-serif;
+}
+
+/* Retro CRT / Arcade scanlines overlay */
+.arcade-scanlines {
+  background: linear-gradient(
+    rgba(18, 16, 16, 0) 50%, 
+    rgba(0, 0, 0, 0.35) 50%
+  ), linear-gradient(
+    90deg,
+    rgba(255, 0, 0, 0.04),
+    rgba(0, 255, 0, 0.02),
+    rgba(0, 0, 255, 0.04)
+  );
+  background-size: 100% 4px, 6px 100%;
+  pointer-events: none;
+}
+
+/* Cyber grid background */
+.arcade-grid {
+  background-image: 
+    linear-gradient(to right, rgba(99, 102, 241, 0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(99, 102, 241, 0.08) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* Neon glow animations */
+@keyframes neon-pulse {
+  0%, 100% {
+    box-shadow: 0 0 15px rgba(99, 102, 241, 0.25), inset 0 0 8px rgba(99, 102, 241, 0.12);
+  }
+  50% {
+    box-shadow: 0 0 25px rgba(99, 102, 241, 0.5), inset 0 0 16px rgba(99, 102, 241, 0.25);
+  }
+}
+
+.animate-neon-pulse {
+  animation: neon-pulse 2.2s infinite ease-in-out;
+}
+
+/* Scanline sweep animation across skeleton bars */
+@keyframes scan-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-scan-sweep {
+  position: relative;
+  overflow: hidden;
+}
+
+.animate-scan-sweep::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(99, 102, 241, 0.18) 50%,
+    transparent 100%
+  );
+  animation: scan-sweep 1.8s infinite ease-in-out;
+}
+
 /* Custom smooth mobile touch scrollbars */
 .overflow-x-auto, .overflow-y-auto {
   -webkit-overflow-scrolling: touch;

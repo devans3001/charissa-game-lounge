@@ -33,6 +33,7 @@ import {
   Copy,
   ShoppingCart
 } from 'lucide-react';
+import { GameCatalogSkeleton, GameDataLoadingOverlay, GameInlineLoader } from './game-ui/index.ts';
 
 interface CartItem {
   id: string; // unique item draft id
@@ -1622,9 +1623,7 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
 
             {/* Catalog Grid */}
             {loadingGames ? (
-              <div className="p-12 text-center text-slate-400 text-xs">
-                Loading lounge catalog...
-              </div>
+              <GameCatalogSkeleton count={6} />
             ) : filteredGames.length === 0 ? (
               <div className="p-12 text-center text-slate-500 text-xs">
                 No games match your search.
@@ -2014,6 +2013,26 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Game-like HUD async operation overlays */}
+      {submittingPayment && (
+        <GameDataLoadingOverlay
+          label="PROCESSING GAME LOUNGE SALE..."
+          sublabel="Generating official receipt, auditing float tokens, and committing to ledger..."
+        />
+      )}
+      {savingTab && (
+        <GameDataLoadingOverlay
+          label="SAVING CUSTOMER TAB..."
+          sublabel="Locking player station and updating open tab registers..."
+        />
+      )}
+      {quickSalePending && (
+        <GameDataLoadingOverlay
+          label="DISPENSING QUICK COINS..."
+          sublabel="Deducting vault float tokens and printing receipt..."
+        />
       )}
     </div>
   );

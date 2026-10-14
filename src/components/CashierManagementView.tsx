@@ -14,6 +14,7 @@ import {
   ShieldAlert,
   Clock
 } from 'lucide-react';
+import { GameCardSkeleton, GameDataLoadingOverlay, GameInlineLoader } from './game-ui/index.ts';
 
 interface CashierWithStats extends User {
   totalTransactions: number;
@@ -158,7 +159,10 @@ export function CashierManagementView() {
       )}
 
       {/* Cashiers List */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {loading && cashiers.length === 0 ? (
+        <GameCardSkeleton count={3} columns="grid-cols-1 md:grid-cols-2 lg:grid-cols-3" />
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {cashiers.map(c => (
           <div
             key={c.id}
@@ -256,6 +260,7 @@ export function CashierManagementView() {
           </div>
         ))}
       </div>
+      )}
 
       {/* Add Cashier Modal */}
       {showAddModal && (
@@ -384,6 +389,20 @@ export function CashierManagementView() {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Game-like HUD async operation overlays */}
+      {creating && (
+        <GameDataLoadingOverlay
+          label="INITIALIZING CASHIER CREDENTIALS..."
+          sublabel="Creating secure profile, hashing password, and updating authorization matrix..."
+        />
+      )}
+      {resetting && (
+        <GameDataLoadingOverlay
+          label="OVERRIDING SECURITY CREDENTIALS..."
+          sublabel="Encrypting new password and demanding first-login change..."
+        />
       )}
     </div>
   );

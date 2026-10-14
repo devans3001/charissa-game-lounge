@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { DashboardStats } from '../types/index.ts';
 import { api } from '../lib/api.ts';
 import { formatNaira, formatLagosDate, formatLagosTime } from '../lib/utils.ts';
 import { useAuth } from '../context/AuthContext.tsx';
+import { queryKeys } from '../lib/queryClient.ts';
 import {
   TrendingUp,
   CreditCard,
@@ -19,6 +21,7 @@ import {
   Filter,
   Coins
 } from 'lucide-react';
+import { GameCardSkeleton, GameTableSkeleton, GameInlineLoader } from './game-ui/index.ts';
 
 interface DashboardViewProps {
   onNavigateToReconciliation?: () => void;
@@ -35,36 +38,37 @@ export function DashboardView({
   const [period, setPeriod] = useState<'today' | 'yesterday' | 'this_week' | 'this_month' | 'custom'>('today');
   const [customStart, setCustomStart] = useState<string>('');
   const [customEnd, setCustomEnd] = useState<string>('');
-  const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchStats();
-  }, [period]);
-
-  const fetchStats = async () => {
-    try {
-      setLoading(true);
-      setError(null);
+  const {
+    data: stats,
+    isLoading: loading,
+    error: queryError,
+    refetch,
+  } = useQuery({
+    queryKey: queryKeys.dashboard(
+      period,
+      period === 'custom' ? customStart : undefined,
+      period === 'custom' ? customEnd : undefined
+    ),
+    queryFn: async () => {
       const params: any = { period };
       if (period === 'custom' && customStart && customEnd) {
         params.startDate = customStart;
         params.endDate = customEnd;
       }
       const res = await api.dashboard.getStats(params);
-      setStats(res.stats);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load dashboard statistics');
-    } finally {
-      setLoading(false);
-    }
-  };
+      return res.stats;
+    },
+    // Auto real-time refresh every 10 seconds for live cashier sales
+    refetchInterval: 10_000,
+  });
+
+  const error = queryError ? (queryError as any).message || 'Failed to load dashboard statistics' : null;
 
   const handleCustomFilterSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (customStart && customEnd) {
-      fetchStats();
+      refetch();
     }
   };
 
@@ -79,8 +83,15 @@ export function DashboardView({
           </p>
         </div>
 
-        {/* Period Switcher (Interactive Segmented Tabs) */}
-        <div className="flex items-center gap-1 p-1 bg-slate-900 border border-slate-800 rounded-xl self-start sm:self-auto">
+        <div className="flex flex-wrap items-center gap-3">
+          {loading && (
+            <div className="px-2.5 py-1 bg-indigo-950/60 border border-indigo-900/60 rounded-lg text-indigo-300">
+              <GameInlineLoader label="SYNCING MATRIX..." variant="pulse" />
+            </div>
+          )}
+
+          {/* Period Switcher (Interactive Segmented Tabs) */}
+          <div className="flex items-center gap-1 p-1 bg-slate-900 border border-slate-800 rounded-xl self-start sm:self-auto">
           <button
             type="button"
             onClick={() => setPeriod('today')}
@@ -137,6 +148,7 @@ export function DashboardView({
             Custom Range
           </button>
         </div>
+        </div>
       </div>
 
       {/* Custom Date Form if period === 'custom' */}
@@ -179,6 +191,19 @@ export function DashboardView({
           {error}
         </div>
       )}
+
+      {loading && !stats ? (
+        <div className="space-y-6">
+          <GameCardSkeleton count={4} />
+          <GameTableSkeleton
+            rows={5}
+            cols={4}
+            title="AGGREGATING REVENUE MATRIX"
+            subtitle="Streaming real-time cashier transactions, PlayStation sessions, and coin allocations..."
+          />
+        </div>
+      ) : (
+        <>
 
       {/* POS Reconciliation Banner Alert */}
       {user?.role === 'ADMIN' && stats?.reconciliationStatus && (
@@ -539,6 +564,8 @@ export function DashboardView({
           </div>
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }

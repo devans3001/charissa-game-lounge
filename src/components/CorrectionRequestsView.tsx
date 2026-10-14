@@ -14,6 +14,7 @@ import {
   X,
   Receipt
 } from 'lucide-react';
+import { GameTableSkeleton, GameDataLoadingOverlay, GameInlineLoader } from './game-ui/index.ts';
 
 export function CorrectionRequestsView() {
   const { user } = useAuth();
@@ -94,7 +95,15 @@ export function CorrectionRequestsView() {
       )}
 
       {/* Requests list */}
-      <div className="space-y-3">
+      {loading && requests.length === 0 ? (
+        <GameTableSkeleton
+          rows={5}
+          cols={4}
+          title="STREAMING CASHIER FIX TICKETS"
+          subtitle="Polling pending void and payment method dispute submissions..."
+        />
+      ) : (
+        <div className="space-y-3">
         {requests.map(req => (
           <div
             key={req.id}
@@ -166,6 +175,7 @@ export function CorrectionRequestsView() {
           </div>
         )}
       </div>
+      )}
 
       {/* Review Modal */}
       {reviewingReq && (
@@ -236,6 +246,14 @@ export function CorrectionRequestsView() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Game-like HUD async operation overlays */}
+      {submitting && (
+        <GameDataLoadingOverlay
+          label="COMMITTING AUDIT RESOLUTION..."
+          sublabel="Applying transaction adjustment and signing manager approval..."
+        />
       )}
     </div>
   );

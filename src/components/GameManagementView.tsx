@@ -16,6 +16,7 @@ import {
   History,
   Info
 } from 'lucide-react';
+import { GameCatalogSkeleton, GameDataLoadingOverlay, GameInlineLoader } from './game-ui/index.ts';
 
 export function GameManagementView() {
   const [games, setGames] = useState<Game[]>([]);
@@ -246,7 +247,10 @@ export function GameManagementView() {
       </div>
 
       {/* Games Catalog Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {loading && games.length === 0 ? (
+        <GameCatalogSkeleton count={6} />
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {games.map(game => (
           <div
             key={game.id}
@@ -342,6 +346,7 @@ export function GameManagementView() {
           </div>
         ))}
       </div>
+      )}
 
       {/* Add / Edit Game Modal */}
       {(showAddModal || editingGame) && (
@@ -465,6 +470,20 @@ export function GameManagementView() {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Game-like HUD async operation overlays */}
+      {saving && (
+        <GameDataLoadingOverlay
+          label="COMMITTING GAME CATALOG PARAMETERS..."
+          sublabel="Applying immutable pricing snapshots and updating lounge terminal rates..."
+        />
+      )}
+      {savingCoinPrice && (
+        <GameDataLoadingOverlay
+          label="SYNCHRONIZING GLOBAL COIN RATE..."
+          sublabel="Recalculating Naira per play across all coin machines..."
+        />
       )}
     </div>
   );

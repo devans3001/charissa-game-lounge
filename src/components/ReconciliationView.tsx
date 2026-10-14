@@ -17,6 +17,7 @@ import {
   HelpCircle,
   Info
 } from 'lucide-react';
+import { GameCardSkeleton, GameTableSkeleton, GameDataLoadingOverlay, GameInlineLoader } from './game-ui/index.ts';
 
 export function ReconciliationView() {
   const { user } = useAuth();
@@ -188,6 +189,12 @@ export function ReconciliationView() {
         </div>
 
         <div className="flex items-center gap-3">
+          {loading && (
+            <div className="px-2.5 py-1 bg-indigo-950/60 border border-indigo-900/60 rounded-lg text-indigo-300">
+              <GameInlineLoader label="AUDITING DRAWER..." variant="pulse" />
+            </div>
+          )}
+
           {/* Quick Date Switcher */}
           <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-xl px-3 py-1.5">
             <Calendar className="w-4 h-4 text-slate-400" />
@@ -224,6 +231,18 @@ export function ReconciliationView() {
         </div>
       )}
 
+      {loading && !reconciliation ? (
+        <div className="space-y-6">
+          <GameCardSkeleton count={3} columns="grid-cols-1 sm:grid-cols-3" />
+          <GameTableSkeleton
+            rows={5}
+            cols={5}
+            title={`COMPARING REVENUE FOR ${selectedDate}`}
+            subtitle="Cross-checking physical cash drawers, card POS settlements, and bank transfers..."
+          />
+        </div>
+      ) : (
+        <>
       {/* Status banner */}
       <div className={`p-5 rounded-2xl border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 ${
         isLocked
@@ -484,6 +503,8 @@ export function ReconciliationView() {
           </div>
         )}
       </div>
+        </>
+      )}
 
       {/* Modal: Authorize Reopen */}
       {showReopenModal && (
@@ -537,6 +558,20 @@ export function ReconciliationView() {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Game-like HUD async operation overlays */}
+      {saving && (
+        <GameDataLoadingOverlay
+          label="COMMITTING DAILY RECONCILIATION..."
+          sublabel="Verifying cashier shift balances, logging discrepancy audits, and locking register..."
+        />
+      )}
+      {reopening && (
+        <GameDataLoadingOverlay
+          label="AUTHORIZING REGISTER REOPEN..."
+          sublabel="Unlocking reconciliation records and generating security audit trail..."
+        />
       )}
     </div>
   );

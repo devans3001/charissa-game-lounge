@@ -4,6 +4,7 @@ import { api } from '../lib/api.ts';
 import { formatLagosDateTime } from '../lib/utils.ts';
 import { Landmark, Save, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { NIGERIAN_BANKS, OTHER_BANK_OPTION } from '../lib/banks.ts';
+import { GameCardSkeleton, GameDataLoadingOverlay } from './game-ui/index.ts';
 
 export function BankAccountsView() {
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
@@ -115,10 +116,7 @@ export function BankAccountsView() {
       )}
 
       {loading ? (
-        <div className="p-12 flex items-center justify-center text-slate-400 text-xs font-mono">
-          <div className="w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full animate-spin mr-3" />
-          Loading bank accounts...
-        </div>
+        <GameCardSkeleton count={3} columns="grid-cols-1 lg:grid-cols-3" />
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {([1, 2, 3] as const).map(slot => {
@@ -227,6 +225,14 @@ export function BankAccountsView() {
             );
           })}
         </div>
+      )}
+
+      {/* Game-like HUD async operation overlay */}
+      {savingSlot !== null && (
+        <GameDataLoadingOverlay
+          label={`COMMITTING BANK ACCOUNT (SLOT ${savingSlot})...`}
+          sublabel="Encrypting account details and publishing to cashier payment counters..."
+        />
       )}
     </div>
   );
