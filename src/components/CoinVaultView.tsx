@@ -56,9 +56,9 @@ export function CoinVaultView() {
   const [compNotes, setCompNotes] = useState('');
   const [submittingComp, setSubmittingComp] = useState(false);
 
-  const balancesQuery = useQuery({
+  const {data: balancesQueryData, error: balancesQueryError, isLoading: balancesQueryIsLoading} = useQuery({
     queryKey: queryKeys.coinBalances(),
-    queryFn: async () => (await api.coins.balances({})).balances,
+    queryFn: async () => (await api.coins.balances({})),
     refetchInterval: 12_000,
   });
   const compQuery = useQuery({
@@ -84,22 +84,25 @@ export function CoinVaultView() {
     refetchInterval: 30_000,
   });
 
-  const balances = balancesQuery.data || [];
+
+  console.log(balancesQueryData,"balancesQuery")
+  const balances = balancesQueryData?.balances ?? [];
+  console.log(balances,"balances")
   const compensations = compQuery.data || [];
   const coinGames: Game[] = gamesQuery.data || [];
   const allocations: CoinAllocation[] = allocQuery.data || [];
   const cashiers = cashiersQuery.data || [];
   const loading =
-    balancesQuery.isLoading ||
+    balancesQueryIsLoading ||
     compQuery.isLoading ||
     gamesQuery.isLoading ||
     (isAdmin && (allocQuery.isLoading || cashiersQuery.isLoading));
 
   useEffect(() => {
     const err =
-      balancesQuery.error || compQuery.error || gamesQuery.error || allocQuery.error || cashiersQuery.error;
+      balancesQueryError || compQuery.error || gamesQuery.error || allocQuery.error || cashiersQuery.error;
     if (err) setError((err as any).message || 'Failed to load coin vault data');
-  }, [balancesQuery.error, compQuery.error, gamesQuery.error, allocQuery.error, cashiersQuery.error]);
+  }, [balancesQueryError, compQuery.error, gamesQuery.error, allocQuery.error, cashiersQuery.error]);
 
   // When a coin game is picked from the dropdown, prefill its standard coin count
   const handleCompGameSelect = (gameId: string) => {

@@ -16,6 +16,11 @@ import { GameBootLoadingScreen } from './components/game-ui/index.ts';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from './lib/queryClient.ts';
 
+
+/// let each section have its own page/route, you wiil need to set up a router like react-router-dom
+
+
+
 function MainApp() {
   const { user, isLoading } = useAuth();
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
