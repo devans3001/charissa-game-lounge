@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Game, PaymentMethod, Transaction, GameCategory, CustomerTab, BankAccount, CashierCoinBalance } from '../types/index.ts';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import { Game, PaymentMethod, Transaction, GameCategory, CustomerTab, CashierCoinBalance } from '../types/index.ts';
 import { api } from '../lib/api.ts';
+import { queryClient, queryKeys } from '../lib/queryClient.ts';
 import { useAuth } from '../context/AuthContext.tsx';
 import { formatNaira, formatLagosDateTime } from '../lib/utils.ts';
 import {
@@ -53,12 +55,6 @@ interface NewSaleViewProps {
 
 export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
   const { user } = useAuth();
-  const [games, setGames] = useState<Game[]>([]);
-  const [loadingGames, setLoadingGames] = useState(true);
-
-  // Active customer tabs from server
-  const [activeTabs, setActiveTabs] = useState<CustomerTab[]>([]);
-  const [loadingTabs, setLoadingTabs] = useState(false);
   const [selectedTabId, setSelectedTabId] = useState<string | null>(null); // null = new draft tab
 
   // Current tab / customer form state
@@ -77,10 +73,6 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
   const [paymentReference, setPaymentReference] = useState<string>('');
   const [senderName, setSenderName] = useState<string>('');
   const [amountTendered, setAmountTendered] = useState<string>('');
-
-  // Shift summary stats for cashier
-  const [shiftCount, setShiftCount] = useState<number>(0);
-  const [shiftTotalKobo, setShiftTotalKobo] = useState<number>(0);
 
   // Quick coin sale (crowd mode): prepaid coins with no game named
   const [showQuickCoins, setShowQuickCoins] = useState(false);
@@ -105,31 +97,48 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
   // In-app confirmation for cancelling a saved tab (replaces window.confirm)
   const [confirmDeleteTab, setConfirmDeleteTab] = useState<boolean>(false);
 
-  // Bank transfer accounts (shown to customers for transfers)
-  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
-
   // Mobile POS view tab: 'CATALOG' vs 'CART' (Customer details & checkout)
   const [mobilePosTab, setMobilePosTab] = useState<'CATALOG' | 'CART'>('CATALOG');
 
-  useEffect(() => {
-    loadGames();
-    loadActiveTabs();
-    loadCashierShiftStats();
-    loadBankAccounts();
-    loadCashierCoinBalance();
-    loadSettings();
-  }, []);
+  // ---- Live data via TanStack Query (polling + refetch-on-window-focus) ----
+  const gamesQuery = useQuery({
+    queryKey: queryKeys.games(false),
+    queryFn: () => api.games.list(false),
+    refetchInterval: 30_000,
+  });
+  const games = gamesQuery.data?.games || [];
+  const loadingGames = gamesQuery.isLoading;
 
-  const loadBankAccounts = async () => {
-    try {
-      const res = await api.bankAccounts.list();
-      // Treat a missing isActive field as visible (half-written docs must
-      // never hide configured accounts from the cashier's checkout screen)
-      setBankAccounts(res.accounts.filter(a => a.isActive !== false));
-    } catch (err) {
-      console.error('Failed to load bank accounts:', err);
-    }
-  };
+  const tabsQuery = useQuery({
+    queryKey: queryKeys.customerTabs(),
+    queryFn: async () => (await api.tabs.list({ status: 'OPEN' })).tabs,
+    refetchInterval: 10_000,
+  });
+  const activeTabs = tabsQuery.data || [];
+  const loadingTabs = tabsQuery.isLoading;
+
+  const shiftQuery = useQuery({
+    queryKey: queryKeys.shiftStats(),
+    queryFn: async () => (await api.dashboard.getStats({ period: 'today' })).stats,
+    refetchInterval: 12_000,
+  });
+  const shiftCount = shiftQuery.data?.totalTransactions ?? 0;
+  const shiftTotalKobo = shiftQuery.data?.totalRevenueKobo ?? 0;
+
+  const bankAccountsQuery = useQuery({
+    queryKey: queryKeys.bankAccounts(),
+    queryFn: () => api.bankAccounts.list(),
+    // Treat a missing isActive field as visible (half-written docs must
+    // never hide configured accounts from the cashier's checkout screen)
+    select: res => res.accounts.filter(a => a.isActive !== false),
+    refetchInterval: 30_000,
+  });
+  const bankAccounts = bankAccountsQuery.data || [];
+
+  useEffect(() => {
+    const err = gamesQuery.error || tabsQuery.error || shiftQuery.error;
+    if (err) setError('Failed to load sales data: ' + (err as any).message);
+  }, [gamesQuery.error, tabsQuery.error, shiftQuery.error]);
 
   const handleCopyAccountNumber = (acctNo: string) => {
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -143,44 +152,16 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
     }
   };
 
-  const loadGames = async () => {
-    try {
-      setLoadingGames(true);
-      const res = await api.games.list(false);
-      setGames(res.games);
-    } catch (err: any) {
-      setError('Failed to load active games catalog: ' + err.message);
-    } finally {
-      setLoadingGames(false);
-    }
-  };
-
-  const loadActiveTabs = async () => {
-    try {
-      setLoadingTabs(true);
-      const res = await api.tabs.list({ status: 'OPEN' });
-      setActiveTabs(res.tabs);
-    } catch (err: any) {
-      console.error('Failed to load active tabs:', err);
-    } finally {
-      setLoadingTabs(false);
-    }
-  };
-
-  const loadCashierShiftStats = async () => {
-    try {
-      const { stats } = await api.dashboard.getStats({ period: 'today' });
-      setShiftCount(stats.totalTransactions);
-      setShiftTotalKobo(stats.totalRevenueKobo);
-    } catch (err) {
-      console.error('Failed to load shift stats:', err);
-    }
-  };
-
   // Coin float balance per cashier (allocated vs sold/voided/compensated)
-  const [cashierCoinBalance, setCashierCoinBalance] = useState<CashierCoinBalance | null>(null);
-  // All balances returned by the server (cashier sees only their own; admin sees every cashier)
-  const [allCoinBalances, setAllCoinBalances] = useState<CashierCoinBalance[]>([]);
+  const coinBalanceQuery = useQuery({
+    queryKey: queryKeys.coinBalances(),
+    queryFn: () => api.coins.balances(),
+    refetchInterval: 10_000,
+  });
+  const allCoinBalances = coinBalanceQuery.data?.balances || [];
+  // Cashiers only ever get their own balance back; admins get every cashier
+  const cashierCoinBalance =
+    allCoinBalances.find((b: CashierCoinBalance) => b.cashierId === user?.id) ?? null;
   // Coins physically left in this cashier's float right now (drives guards + low-stock alert)
   const coinsRemaining = cashierCoinBalance?.expectedRemainingCoins ?? 0;
   // Admin view: the lowest float across every cashier — the one that needs a top-up first
@@ -191,28 +172,12 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
   const lowCoinCount = coinsRemaining > 0 ? coinsRemaining : (lowestCashierFloat?.expectedRemainingCoins ?? 0);
 
   // Global coin price (so the quick coin modal can show a live total)
-  const [coinPriceKobo, setCoinPriceKobo] = useState<number>(0);
-
-  const loadSettings = async () => {
-    try {
-      const res = await api.settings.get();
-      setCoinPriceKobo(res.settings.coinPriceKobo);
-    } catch (err) {
-      console.error('Failed to load settings:', err);
-    }
-  };
-
-  const loadCashierCoinBalance = async () => {
-    try {
-      const res = await api.coins.balances();
-      setAllCoinBalances(res.balances);
-      // Cashiers only ever get their own balance back; admins get every cashier
-      const bal = res.balances.find((b: CashierCoinBalance) => b.cashierId === user?.id);
-      setCashierCoinBalance(bal ?? null);
-    } catch (err) {
-      console.error('Failed to load coin float balance:', err);
-    }
-  };
+  const settingsQuery = useQuery({
+    queryKey: queryKeys.settings(),
+    queryFn: () => api.settings.get(),
+    refetchInterval: 30_000,
+  });
+  const coinPriceKobo = settingsQuery.data?.settings.coinPriceKobo ?? 0;
 
   const showToast = (msg: string) => {
     setSuccessToast(msg);
@@ -322,6 +287,21 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
   };
 
   // Save / Update tab (keep entry open without paying yet)
+  const saveTabMutation = useMutation({
+    mutationFn: (vars: { tabId: string | null; payload: any }) =>
+      vars.tabId ? api.tabs.update(vars.tabId, vars.payload) : api.tabs.create(vars.payload),
+    onSuccess: (res, vars) => {
+      setSelectedTabId(res.tab.id);
+      queryClient.invalidateQueries({ queryKey: ['customerTabs'] });
+      showToast(
+        vars.tabId
+          ? `Saved updates to Tab #${res.tab.tabNumber} for ${res.tab.customerName} (${formatNaira(res.tab.totalAmountKobo)}). Kept open.`
+          : `Created & Saved Tab #${res.tab.tabNumber} for ${res.tab.customerName} (${formatNaira(res.tab.totalAmountKobo)}). Tab is kept open for later payment.`
+      );
+    },
+    onError: (err: any) => setError(err.message || 'Failed to save customer tab'),
+  });
+
   const handleSaveTab = async () => {
     if (!customerName.trim()) {
       setError('Please provide a Customer Name or Station identifier (e.g. "Chinedu", "Station 4 - Tunde").');
@@ -337,46 +317,33 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
     setSavingTab(true);
 
     try {
-      if (selectedTabId) {
-        // Update existing tab
-        const res = await api.tabs.update(selectedTabId, {
+      await saveTabMutation.mutateAsync({
+        tabId: selectedTabId,
+        payload: {
           customerName: customerName.trim(),
           stationOrNote: stationOrNote.trim() || undefined,
           phoneNumber: phoneNumber.trim() || undefined,
           items: cartItems.map(it => ({
-            id: it.id,
+            ...(selectedTabId ? { id: it.id } : {}),
             gameId: it.gameId,
             quantity: it.quantity,
           })),
-        });
-
-        // Update list
-        setActiveTabs(prev => prev.map(t => (t.id === selectedTabId ? res.tab : t)));
-        showToast(`Saved updates to Tab #${res.tab.tabNumber} for ${res.tab.customerName} (${formatNaira(res.tab.totalAmountKobo)}). Kept open.`);
-      } else {
-        // Create new tab
-        const res = await api.tabs.create({
-          customerName: customerName.trim(),
-          stationOrNote: stationOrNote.trim() || undefined,
-          phoneNumber: phoneNumber.trim() || undefined,
-          items: cartItems.map(it => ({
-            gameId: it.gameId,
-            quantity: it.quantity,
-          })),
-        });
-
-        setActiveTabs(prev => [res.tab, ...prev]);
-        setSelectedTabId(res.tab.id);
-        showToast(`Created & Saved Tab #${res.tab.tabNumber} for ${res.tab.customerName} (${formatNaira(res.tab.totalAmountKobo)}). Tab is kept open for later payment.`);
-      }
-    } catch (err: any) {
-      setError(err.message || 'Failed to save customer tab');
+        },
+      });
+    } catch {
+      // surfaced through onError
     } finally {
       setSavingTab(false);
     }
   };
 
   // Cancel / Delete open tab — confirmed through the in-app modal
+  const deleteTabMutation = useMutation({
+    mutationFn: (tabId: string) => api.tabs.delete(tabId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['customerTabs'] }),
+    onError: (err: any) => setError(err.message || 'Failed to delete customer tab'),
+  });
+
   const handleDeleteTab = async () => {
     setConfirmDeleteTab(false);
     if (!selectedTabId) {
@@ -385,12 +352,11 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
     }
 
     try {
-      await api.tabs.delete(selectedTabId);
-      setActiveTabs(prev => prev.filter(t => t.id !== selectedTabId));
+      await deleteTabMutation.mutateAsync(selectedTabId);
       showToast(`Tab for "${customerName}" was cancelled.`);
       handleStartNewTab();
-    } catch (err: any) {
-      setError(err.message || 'Failed to delete customer tab');
+    } catch {
+      // surfaced through onError
     }
   };
 
@@ -403,6 +369,25 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
     setQuickSalePending(false);
     setError(null);
   };
+
+  const quickCoinMutation = useMutation({
+    mutationFn: (vars: { coins: number; paymentMethod: PaymentMethod; paymentReference?: string; senderName?: string }) =>
+      api.transactions.quickCoins(vars),
+    onSuccess: (res, vars) => {
+      // Refresh everything the sale touched — float, ledger, dashboard, shift strip
+      queryClient.invalidateQueries({ queryKey: ['coinBalances'] });
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['reconciliation'] });
+      queryClient.invalidateQueries({ queryKey: ['shiftStats'] });
+      setSuccessToast(`Sold ${vars.coins} prepaid coins for ${formatNaira(res.transaction.totalAmountKobo)}.`);
+      resetQuickCoins();
+    },
+    onError: (err: any) => {
+      setError(err.message || 'Quick coin sale failed');
+      setQuickSalePending(false);
+    },
+  });
 
   // Quick prepaid coin sale (crowd mode) — no game named, payment captured inside the modal
   const handleQuickCoinSale = async () => {
@@ -431,26 +416,74 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
     setError(null);
 
     try {
-      const res = await api.transactions.quickCoins({
+      await quickCoinMutation.mutateAsync({
         coins: count,
         paymentMethod: quickPaymentMethod,
         paymentReference: quickPaymentReference.trim() || undefined,
         senderName: quickPaymentMethod === 'BANK_TRANSFER' ? quickSenderName.trim() : undefined,
       });
-
-      // Refresh shift stats + coin float from the newly recorded sale
-      await loadCashierShiftStats();
-      await loadCashierCoinBalance();
-
-      setSuccessToast(`Sold ${count} prepaid coins for ${formatNaira(res.transaction.totalAmountKobo)}.`);
-      resetQuickCoins();
-    } catch (err: any) {
-      setError(err.message || 'Quick coin sale failed');
-      setQuickSalePending(false);
+    } catch {
+      // surfaced through onError
     }
   };
 
   // Checkout and settle payment
+  const checkoutMutation = useMutation({
+    mutationFn: async (vars: {
+      tabId: string | null;
+      customerName?: string;
+      stationOrNote?: string;
+      phoneNumber?: string;
+      items: { id?: string; gameId: string; quantity: number }[];
+      paymentMethod: PaymentMethod;
+      paymentReference?: string;
+      senderName?: string;
+    }): Promise<Transaction> => {
+      if (vars.tabId) {
+        // First ensure tab is saved with latest cart items
+        await api.tabs.update(vars.tabId, {
+          customerName: vars.customerName || 'Guest Customer',
+          stationOrNote: vars.stationOrNote,
+          phoneNumber: vars.phoneNumber,
+          items: vars.items,
+        });
+
+        // Checkout tab
+        const res = await api.tabs.checkout(vars.tabId, {
+          paymentMethod: vars.paymentMethod,
+          paymentReference: vars.paymentReference,
+          senderName: vars.senderName,
+        });
+        return res.transaction;
+      }
+
+      // Direct multi-item checkout without saving open tab first
+      const res = await api.transactions.create({
+        customerName: vars.customerName,
+        items: vars.items.map(({ id: _id, ...rest }) => rest),
+        paymentMethod: vars.paymentMethod,
+        paymentReference: vars.paymentReference,
+        senderName: vars.senderName,
+      });
+      return res.transaction;
+    },
+    onSuccess: txn => {
+      // Refresh tabs, ledger, dashboard, shift strip, coin float and reconciliation
+      queryClient.invalidateQueries({ queryKey: ['customerTabs'] });
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['shiftStats'] });
+      queryClient.invalidateQueries({ queryKey: ['coinBalances'] });
+      queryClient.invalidateQueries({ queryKey: ['reconciliation'] });
+
+      setCompletedTxn(txn);
+      if (onTransactionCreated) {
+        onTransactionCreated(txn);
+      }
+    },
+    onError: (err: any) => setError(err.message || 'Payment processing failed'),
+  });
+
   const handleConfirmCheckout = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -467,56 +500,22 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
 
     setSubmittingPayment(true);
     try {
-      let finalTxn: Transaction;
-
-      if (selectedTabId) {
-        // First ensure tab is saved with latest cart items
-        await api.tabs.update(selectedTabId, {
-          customerName: customerName.trim() || 'Guest Customer',
-          stationOrNote: stationOrNote.trim() || undefined,
-          phoneNumber: phoneNumber.trim() || undefined,
-          items: cartItems.map(it => ({
-            id: it.id,
-            gameId: it.gameId,
-            quantity: it.quantity,
-          })),
-        });
-
-        // Checkout tab
-        const res = await api.tabs.checkout(selectedTabId, {
-          paymentMethod,
-          paymentReference: paymentReference.trim() || undefined,
-          senderName: paymentMethod === 'BANK_TRANSFER' ? senderName.trim() : undefined,
-        });
-
-        finalTxn = res.transaction;
-        // Remove from active tabs list
-        setActiveTabs(prev => prev.filter(t => t.id !== selectedTabId));
-      } else {
-        // Direct multi-item checkout without saving open tab first
-        const res = await api.transactions.create({
-          customerName: customerName.trim() || undefined,
-          items: cartItems.map(it => ({
-            gameId: it.gameId,
-            quantity: it.quantity,
-          })),
-          paymentMethod,
-          paymentReference: paymentReference.trim() || undefined,
-          senderName: paymentMethod === 'BANK_TRANSFER' ? senderName.trim() : undefined,
-        });
-
-        finalTxn = res.transaction;
-      }
-
-      setCompletedTxn(finalTxn);
-      setShiftCount(prev => prev + 1);
-      setShiftTotalKobo(prev => prev + finalTxn.totalAmountKobo);
-
-      if (onTransactionCreated) {
-        onTransactionCreated(finalTxn);
-      }
-    } catch (err: any) {
-      setError(err.message || 'Payment processing failed');
+      await checkoutMutation.mutateAsync({
+        tabId: selectedTabId,
+        customerName: customerName.trim() || undefined,
+        stationOrNote: stationOrNote.trim() || undefined,
+        phoneNumber: phoneNumber.trim() || undefined,
+        items: cartItems.map(it => ({
+          id: it.id,
+          gameId: it.gameId,
+          quantity: it.quantity,
+        })),
+        paymentMethod,
+        paymentReference: paymentReference.trim() || undefined,
+        senderName: paymentMethod === 'BANK_TRANSFER' ? senderName.trim() : undefined,
+      });
+    } catch {
+      // surfaced through onError
     } finally {
       setSubmittingPayment(false);
     }
@@ -642,7 +641,7 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
           </div>
           <button
             type="button"
-            onClick={loadCashierCoinBalance}
+            onClick={() => coinBalanceQuery.refetch()}
             className="shrink-0 px-3 py-1.5 rounded-lg border border-current text-[11px] font-semibold hover:bg-white/10 transition cursor-pointer"
           >
             Refresh

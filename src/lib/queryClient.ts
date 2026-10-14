@@ -20,7 +20,9 @@ export const queryKeys = {
     ['dashboard', { period, startDate, endDate }] as const,
   transactions: (params: Record<string, any>) =>
     ['transactions', params] as const,
-  games: () => ['games'] as const,
+  games: (all?: boolean) => ['games', { all: !!all }] as const,
+  settings: () => ['settings'] as const,
+  shiftStats: () => ['shiftStats'] as const,
   coinPrice: () => ['coinPrice'] as const,
   cashierCoinBalance: (cashierId?: string) =>
     ['cashierCoinBalance', cashierId || 'self'] as const,

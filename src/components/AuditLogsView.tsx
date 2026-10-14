@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AuditLog } from '../types/index.ts';
 import { api } from '../lib/api.ts';
+import { queryKeys } from '../lib/queryClient.ts';
 import { formatLagosDateTime, formatLagosDate } from '../lib/utils.ts';
 import {
   ShieldCheck,
@@ -20,17 +22,14 @@ import {
 import { GameTableSkeleton, GameInlineLoader } from './game-ui/index.ts';
 
 export function AuditLogsView() {
-  const [logs, setLogs] = useState<AuditLog[]>([]);
-  const [total, setTotal] = useState<number>(0);
   const [page, setPage] = useState<number>(1);
-  const [totalPages, setTotalPages] = useState<number>(1);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
 
   const [viewMode, setViewMode] = useState<'AUTO' | 'CARD' | 'TABLE'>('AUTO');
 
   // Filters
   const [search, setSearch] = useState<string>('');
+  // Search only fires on submit (mirrors the old manual-load behaviour)
+  const [submittedSearch, setSubmittedSearch] = useState<string>('');
   const [entityType, setEntityType] = useState<string>('');
   const [action, setAction] = useState<string>('');
   const [startDate, setStartDate] = useState<string>('');
@@ -38,37 +37,25 @@ export function AuditLogsView() {
 
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
 
-  useEffect(() => {
-    loadLogs();
-  }, [page, entityType, action, startDate, endDate]);
-
-  const loadLogs = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const res = await api.auditLogs.list({
-        page,
-        limit: 25,
-        search,
-        entityType,
-        action,
-        startDate,
-        endDate,
-      });
-      setLogs(res.logs);
-      setTotal(res.total);
-      setTotalPages(res.totalPages || 1);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load audit logs');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const {
+    data,
+    isLoading: loading,
+    error: queryError,
+  } = useQuery({
+    queryKey: queryKeys.auditLogs({ page, limit: 25, search: submittedSearch, entityType, action, startDate, endDate }),
+    queryFn: () =>
+      api.auditLogs.list({ page, limit: 25, search: submittedSearch, entityType, action, startDate, endDate }),
+    refetchInterval: 15_000,
+  });
+  const logs = data?.logs || [];
+  const total = data?.total || 0;
+  const totalPages = data?.totalPages || 1;
+  const error = queryError ? ((queryError as any).message || 'Failed to load audit logs') : null;
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmittedSearch(search);
     setPage(1);
-    loadLogs();
   };
 
   return (

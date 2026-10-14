@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { User } from '../types/index.ts';
 import { api } from '../lib/api.ts';
+import { queryClient, queryKeys } from '../lib/queryClient.ts';
 import { formatNaira, formatLagosDateTime } from '../lib/utils.ts';
 import {
   Users,
@@ -24,8 +26,6 @@ interface CashierWithStats extends User {
 }
 
 export function CashierManagementView() {
-  const [cashiers, setCashiers] = useState<CashierWithStats[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -40,35 +40,51 @@ export function CashierManagementView() {
   const [resetPasswordVal, setResetPasswordVal] = useState('');
   const [resetting, setResetting] = useState(false);
 
-  useEffect(() => {
-    loadCashiers();
-  }, []);
-
-  const loadCashiers = async () => {
-    try {
-      setLoading(true);
-      setError(null);
+  const {
+    data,
+    isLoading: loading,
+    error: queryError,
+  } = useQuery({
+    queryKey: queryKeys.cashiers(),
+    queryFn: async () => {
       const res = await api.cashiers.list();
-      setCashiers(res.cashiers as CashierWithStats[]);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load cashier accounts');
-    } finally {
-      setLoading(false);
-    }
-  };
+      return res.cashiers as CashierWithStats[];
+    },
+    refetchInterval: 20_000,
+  });
+  const cashiers = data || [];
+
+  useEffect(() => {
+    if (queryError) setError((queryError as any).message || 'Failed to load cashier accounts');
+  }, [queryError]);
+
+  const toggleMutation = useMutation({
+    mutationFn: (vars: { cashierId: string; makeActive: boolean }) =>
+      api.cashiers.toggleStatus(vars.cashierId, vars.makeActive),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['cashiers'] });
+      queryClient.invalidateQueries({ queryKey: ['coinBalances'] });
+    },
+    onError: (err: any) => setError(err.message || 'Failed to update cashier status'),
+  });
 
   const handleToggleStatus = async (cashier: CashierWithStats) => {
+    setError(null);
     try {
-      setError(null);
-      await api.cashiers.toggleStatus(cashier.id, !cashier.isActive);
+      await toggleMutation.mutateAsync({ cashierId: cashier.id, makeActive: !cashier.isActive });
       setSuccessMessage(
         `Cashier account "${cashier.name}" has been ${!cashier.isActive ? 'activated' : 'deactivated'}.`
       );
-      loadCashiers();
-    } catch (err: any) {
-      setError(err.message || 'Failed to update cashier status');
+    } catch {
+      // surfaced through onError
     }
   };
+
+  const createMutation = useMutation({
+    mutationFn: (vars: { name: string; phoneNumber: string }) => api.cashiers.create(vars),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['cashiers'] }),
+    onError: (err: any) => setError(err.message || 'Failed to create cashier'),
+  });
 
   const handleCreateCashier = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -80,7 +96,7 @@ export function CashierManagementView() {
     try {
       setCreating(true);
       setError(null);
-      const res = await api.cashiers.create({
+      const res = await createMutation.mutateAsync({
         name: newName.trim(),
         phoneNumber: newPhone.trim(),
       });
@@ -91,13 +107,19 @@ export function CashierManagementView() {
       setShowAddModal(false);
       setNewName('');
       setNewPhone('');
-      loadCashiers();
-    } catch (err: any) {
-      setError(err.message || 'Failed to create cashier');
+    } catch {
+      // surfaced through onError
     } finally {
       setCreating(false);
     }
   };
+
+  const resetPasswordMutation = useMutation({
+    mutationFn: (vars: { cashierId: string; password: string }) =>
+      api.cashiers.resetPassword(vars.cashierId, vars.password),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['cashiers'] }),
+    onError: (err: any) => setError(err.message || 'Failed to reset password'),
+  });
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -109,7 +131,7 @@ export function CashierManagementView() {
     try {
       setResetting(true);
       setError(null);
-      await api.cashiers.resetPassword(resetModalUser.id, resetPasswordVal);
+      await resetPasswordMutation.mutateAsync({ cashierId: resetModalUser.id, password: resetPasswordVal });
       setSuccessMessage(`Password for "${resetModalUser.name}" successfully reset.`);
       setResetModalUser(null);
       setResetPasswordVal('');

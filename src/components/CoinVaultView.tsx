@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { CoinAllocation, CoinCompensation, CashierCoinBalance, User, Game } from '../types/index.ts';
 import { api } from '../lib/api.ts';
+import { queryClient, queryKeys } from '../lib/queryClient.ts';
 import { useAuth } from '../context/AuthContext.tsx';
 import { formatLagosDateTime } from '../lib/utils.ts';
 import {
@@ -28,11 +30,6 @@ export function CoinVaultView() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'ADMIN';
 
-  const [balances, setBalances] = useState<CashierCoinBalance[]>([]);
-  const [allocations, setAllocations] = useState<CoinAllocation[]>([]);
-  const [compensations, setCompensations] = useState<CoinCompensation[]>([]);
-  const [cashiers, setCashiers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -58,39 +55,51 @@ export function CoinVaultView() {
   const [compReason, setCompReason] = useState('');
   const [compNotes, setCompNotes] = useState('');
   const [submittingComp, setSubmittingComp] = useState(false);
-  const [coinGames, setCoinGames] = useState<Game[]>([]);
+
+  const balancesQuery = useQuery({
+    queryKey: queryKeys.coinBalances(),
+    queryFn: async () => (await api.coins.balances({})).balances,
+    refetchInterval: 12_000,
+  });
+  const compQuery = useQuery({
+    queryKey: queryKeys.coinCompensations(),
+    queryFn: async () => (await api.coins.compensations.list({})).compensations,
+    refetchInterval: 30_000,
+  });
+  const gamesQuery = useQuery({
+    queryKey: queryKeys.games(false),
+    queryFn: () => api.games.list(),
+    select: res => (res.games || []).filter(g => g.category === 'COIN_GAME' && g.isActive),
+  });
+  const allocQuery = useQuery({
+    queryKey: queryKeys.coinAllocations(),
+    queryFn: async () => (await api.coins.allocations.list({})).allocations,
+    enabled: isAdmin,
+    refetchInterval: 12_000,
+  });
+  const cashiersQuery = useQuery({
+    queryKey: queryKeys.cashiers(),
+    queryFn: async () => ((await api.cashiers.list()).cashiers as unknown as User[]).filter(c => c.isActive),
+    enabled: isAdmin,
+    refetchInterval: 30_000,
+  });
+
+  const balances = balancesQuery.data || [];
+  const compensations = compQuery.data || [];
+  const coinGames: Game[] = gamesQuery.data || [];
+  const allocations: CoinAllocation[] = allocQuery.data || [];
+  const cashiers = cashiersQuery.data || [];
+  const loading =
+    balancesQuery.isLoading ||
+    compQuery.isLoading ||
+    gamesQuery.isLoading ||
+    (isAdmin && (allocQuery.isLoading || cashiersQuery.isLoading));
 
   useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const [balRes, compRes, gamesRes] = await Promise.all([
-        api.coins.balances({}),
-        api.coins.compensations.list({}),
-        api.games.list(),
-      ]);
-      setBalances(balRes.balances);
-      setCompensations(compRes.compensations);
-      setCoinGames((gamesRes.games || []).filter(g => g.category === 'COIN_GAME' && g.isActive));
-
-      if (isAdmin) {
-        const [allocRes, cashRes] = await Promise.all([
-          api.coins.allocations.list({}),
-          api.cashiers.list(),
-        ]);
-        setAllocations(allocRes.allocations);
-        setCashiers((cashRes.cashiers as unknown as User[]).filter(c => c.isActive));
-      }
-    } catch (err: any) {
-      setError(err.message || 'Failed to load coin vault data');
-    } finally {
-      setLoading(false);
-    }
-  };
+    const err =
+      balancesQuery.error || compQuery.error || gamesQuery.error || allocQuery.error || cashiersQuery.error;
+    if (err) setError((err as any).message || 'Failed to load coin vault data');
+  }, [balancesQuery.error, compQuery.error, gamesQuery.error, allocQuery.error, cashiersQuery.error]);
 
   // When a coin game is picked from the dropdown, prefill its standard coin count
   const handleCompGameSelect = (gameId: string) => {
@@ -115,6 +124,16 @@ export function CoinVaultView() {
     setTimeout(() => setSuccessMessage(null), 5000);
   };
 
+  const allocateMutation = useMutation({
+    mutationFn: (vars: { cashierId: string; initialCoins: number; notes?: string }) =>
+      api.coins.allocations.create(vars),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['coinBalances'] });
+      queryClient.invalidateQueries({ queryKey: ['coinAllocations'] });
+    },
+    onError: (err: any) => setError(err.message || 'Failed to allocate coins'),
+  });
+
   const handleAllocate = async (e: React.FormEvent) => {
     e.preventDefault();
     const coins = parseInt(allocCoins, 10);
@@ -125,7 +144,7 @@ export function CoinVaultView() {
     try {
       setSubmittingAllocate(true);
       setError(null);
-      const res = await api.coins.allocations.create({
+      const res = await allocateMutation.mutateAsync({
         cashierId: allocCashierId,
         initialCoins: coins,
         notes: allocNotes.trim() || undefined,
@@ -135,13 +154,26 @@ export function CoinVaultView() {
       setAllocCashierId('');
       setAllocCoins('');
       setAllocNotes('');
-      loadData();
-    } catch (err: any) {
-      setError(err.message || 'Failed to allocate coins');
+    } catch {
+      // surfaced through onError
     } finally {
       setSubmittingAllocate(false);
     }
   };
+
+  const closeAllocationMutation = useMutation({
+    mutationFn: (vars: { allocationId: string; actualRemainingCoins: number; notes?: string }) =>
+      api.coins.allocations.close(vars.allocationId, {
+        actualRemainingCoins: vars.actualRemainingCoins,
+        notes: vars.notes,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['coinBalances'] });
+      queryClient.invalidateQueries({ queryKey: ['coinAllocations'] });
+      queryClient.invalidateQueries({ queryKey: ['reconciliation'] });
+    },
+    onError: (err: any) => setError(err.message || 'Failed to close allocation'),
+  });
 
   const handleCloseAllocation = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -154,7 +186,8 @@ export function CoinVaultView() {
     try {
       setSubmittingClose(true);
       setError(null);
-      const res = await api.coins.allocations.close(closeTarget.id, {
+      const res = await closeAllocationMutation.mutateAsync({
+        allocationId: closeTarget.id,
         actualRemainingCoins: actual,
         notes: closeNotes.trim() || undefined,
       });
@@ -169,13 +202,29 @@ export function CoinVaultView() {
       setCloseTarget(null);
       setCloseActualCount('');
       setCloseNotes('');
-      loadData();
-    } catch (err: any) {
-      setError(err.message || 'Failed to close allocation');
+    } catch {
+      // surfaced through onError
     } finally {
       setSubmittingClose(false);
     }
   };
+
+  const compensationMutation = useMutation({
+    mutationFn: (vars: {
+      customerName: string;
+      gameId: string;
+      gameName: string;
+      coinsIssued: number;
+      reason: string;
+      notes?: string;
+    }) => api.coins.compensations.create(vars),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['coinBalances'] });
+      queryClient.invalidateQueries({ queryKey: ['coinCompensations'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+    onError: (err: any) => setError(err.message || 'Failed to record lost coins'),
+  });
 
   const handleCompensation = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -187,7 +236,7 @@ export function CoinVaultView() {
     try {
       setSubmittingComp(true);
       setError(null);
-      await api.coins.compensations.create({
+      await compensationMutation.mutateAsync({
         customerName: compCustomerName.trim(),
         gameId: compGameId,
         gameName: compGameName.trim(),
@@ -203,9 +252,8 @@ export function CoinVaultView() {
       setCompCoins('1');
       setCompReason('');
       setCompNotes('');
-      loadData();
-    } catch (err: any) {
-      setError(err.message || 'Failed to record lost coins');
+    } catch {
+      // surfaced through onError
     } finally {
       setSubmittingComp(false);
     }

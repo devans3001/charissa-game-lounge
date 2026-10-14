@@ -91,16 +91,6 @@ export function TransactionsView({ onNavigateToFixRequests }: TransactionsViewPr
     );
   };
 
-  // Map transactionId -> latest correction request for that sale
-  const requestsByTxn = new Map<string, CorrectionRequest>();
-  for (const r of correctionRequests) {
-    const existing = requestsByTxn.get(r.transactionId);
-    if (!existing || new Date(r.createdAt).getTime() > new Date(existing.createdAt).getTime()) {
-      requestsByTxn.set(r.transactionId, r);
-    }
-  }
-  const pendingFixCount = correctionRequests.filter(r => r.status === 'PENDING').length;
-
   // Responsive View Mode: 'AUTO' (Cards on mobile, Table on desktop), or explicit 'CARD' / 'TABLE'
   const [viewMode, setViewMode] = useState<'AUTO' | 'CARD' | 'TABLE'>('AUTO');
   const [showFiltersMobile, setShowFiltersMobile] = useState<boolean>(false);
@@ -174,6 +164,16 @@ export function TransactionsView({ onNavigateToFixRequests }: TransactionsViewPr
     refetchInterval: 12_000,
   });
   const correctionRequests = reqData?.requests || [];
+
+  // Map transactionId -> latest correction request for that sale
+  const requestsByTxn = new Map<string, CorrectionRequest>();
+  for (const r of correctionRequests) {
+    const existing = requestsByTxn.get(r.transactionId);
+    if (!existing || new Date(r.createdAt).getTime() > new Date(existing.createdAt).getTime()) {
+      requestsByTxn.set(r.transactionId, r);
+    }
+  }
+  const pendingFixCount = correctionRequests.filter(r => r.status === 'PENDING').length;
 
   // TanStack Mutations with query invalidation
   const voidMutation = useMutation({

@@ -1,14 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { BankAccount } from '../types/index.ts';
 import { api } from '../lib/api.ts';
+import { queryClient, queryKeys } from '../lib/queryClient.ts';
 import { formatLagosDateTime } from '../lib/utils.ts';
 import { Landmark, Save, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { NIGERIAN_BANKS, OTHER_BANK_OPTION } from '../lib/banks.ts';
 import { GameCardSkeleton, GameDataLoadingOverlay } from './game-ui/index.ts';
 
 export function BankAccountsView() {
-  const [accounts, setAccounts] = useState<BankAccount[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -20,38 +20,64 @@ export function BankAccountsView() {
   });
   const [savingSlot, setSavingSlot] = useState<number | null>(null);
 
-  useEffect(() => {
-    loadAccounts();
-  }, []);
+  const {
+    data,
+    isLoading: loading,
+    error: queryError,
+  } = useQuery({
+    queryKey: queryKeys.bankAccounts(),
+    queryFn: () => api.bankAccounts.list(),
+    refetchInterval: 15_000,
+  });
+  const accounts = data?.accounts || [];
 
-  const loadAccounts = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const res = await api.bankAccounts.list();
-      setAccounts(res.accounts);
-      // Populate forms from existing accounts
-      const nextForms: Record<number, any> = {
-        1: { bankName: '', accountNumber: '', accountName: '', label: '', isActive: true },
-        2: { bankName: '', accountNumber: '', accountName: '', label: '', isActive: true },
-        3: { bankName: '', accountNumber: '', accountName: '', label: '', isActive: true },
+  // Surface query errors in the same banner used for mutation errors
+  useEffect(() => {
+    if (queryError) setError((queryError as any).message || 'Failed to load bank accounts');
+  }, [queryError]);
+
+  // Seed the slot forms once per fresh dataset (focus refetches never clobber in-progress edits)
+  const formsInitRef = useRef(false);
+  useEffect(() => {
+    if (!data || formsInitRef.current) return;
+    formsInitRef.current = true;
+    const nextForms: Record<number, any> = {
+      1: { bankName: '', accountNumber: '', accountName: '', label: '', isActive: true },
+      2: { bankName: '', accountNumber: '', accountName: '', label: '', isActive: true },
+      3: { bankName: '', accountNumber: '', accountName: '', label: '', isActive: true },
+    };
+    for (const acc of data.accounts) {
+      nextForms[acc.slotNumber] = {
+        bankName: acc.bankName,
+        accountNumber: acc.accountNumber,
+        accountName: acc.accountName,
+        label: acc.label || '',
+        isActive: acc.isActive,
       };
-      for (const acc of res.accounts) {
-        nextForms[acc.slotNumber] = {
-          bankName: acc.bankName,
-          accountNumber: acc.accountNumber,
-          accountName: acc.accountName,
-          label: acc.label || '',
-          isActive: acc.isActive,
-        };
-      }
-      setForms(nextForms);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load bank accounts');
-    } finally {
-      setLoading(false);
     }
-  };
+    setForms(nextForms);
+  }, [data]);
+
+  const saveMutation = useMutation({
+    mutationFn: ({ slot }: { slot: 1 | 2 | 3 }) => {
+      const f = forms[slot];
+      return api.bankAccounts.updateSlot(slot, {
+        bankName: f.bankName.trim(),
+        accountNumber: f.accountNumber.trim(),
+        accountName: f.accountName.trim(),
+        label: f.label.trim() || undefined,
+        isActive: f.isActive,
+      });
+    },
+    onSuccess: (_res, { slot }) => {
+      setSuccessMessage(`Bank account slot ${slot} saved. Cashiers will see the updated details immediately.`);
+      setTimeout(() => setSuccessMessage(null), 5000);
+      queryClient.invalidateQueries({ queryKey: ['bankAccounts'] });
+    },
+    onError: (err: any) => {
+      setError(err.message || 'Failed to save bank account');
+    },
+  });
 
   const handleSave = async (slot: 1 | 2 | 3) => {
     const f = forms[slot];
@@ -59,21 +85,12 @@ export function BankAccountsView() {
       setError('Bank name, account number and account holder name are all required.');
       return;
     }
+    setError(null);
+    setSavingSlot(slot);
     try {
-      setSavingSlot(slot);
-      setError(null);
-      await api.bankAccounts.updateSlot(slot, {
-        bankName: f.bankName.trim(),
-        accountNumber: f.accountNumber.trim(),
-        accountName: f.accountName.trim(),
-        label: f.label.trim() || undefined,
-        isActive: f.isActive,
-      });
-      setSuccessMessage(`Bank account slot ${slot} saved. Cashiers will see the updated details immediately.`);
-      setTimeout(() => setSuccessMessage(null), 5000);
-      loadAccounts();
-    } catch (err: any) {
-      setError(err.message || 'Failed to save bank account');
+      await saveMutation.mutateAsync({ slot });
+    } catch {
+      // surfaced through onError
     } finally {
       setSavingSlot(null);
     }

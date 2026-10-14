@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { CorrectionRequest } from '../types/index.ts';
 import { api } from '../lib/api.ts';
+import { queryClient, queryKeys } from '../lib/queryClient.ts';
 import { formatNaira, formatLagosDateTime } from '../lib/utils.ts';
 import { useAuth } from '../context/AuthContext.tsx';
 import {
@@ -18,50 +20,59 @@ import { GameTableSkeleton, GameDataLoadingOverlay, GameInlineLoader } from './g
 
 export function CorrectionRequestsView() {
   const { user } = useAuth();
-  const [requests, setRequests] = useState<CorrectionRequest[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Review modal
   const [reviewingReq, setReviewingReq] = useState<CorrectionRequest | null>(null);
   const [adminNotes, setAdminNotes] = useState<string>('');
-  const [submitting, setSubmitting] = useState<boolean>(false);
+
+
+  const {
+    data,
+    isLoading: loading,
+    error: queryError,
+  } = useQuery({
+    queryKey: queryKeys.correctionRequests(),
+    queryFn: async () => (await api.correctionRequests.list()).requests,
+    refetchInterval: 12_000,
+  });
+  const requests = data || [];
 
   useEffect(() => {
-    loadRequests();
-  }, []);
+    if (queryError) setError((queryError as any).message || 'Failed to load correction requests');
+  }, [queryError]);
 
-  const loadRequests = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const res = await api.correctionRequests.list();
-      setRequests(res.requests);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load correction requests');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const reviewMutation = useMutation({
+    mutationFn: (vars: { id: string; action: 'APPROVE' | 'REJECT'; notes: string }) =>
+      api.correctionRequests.review(vars.id, vars.action, vars.notes),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['correctionRequests'] });
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['reconciliation'] });
+    },
+    onError: (err: any) => setError(err.message || 'Failed to review request'),
+  });
+  const submitting = reviewMutation.isPending;
 
   const handleReview = async (action: 'APPROVE' | 'REJECT') => {
     if (!reviewingReq) return;
 
+    setError(null);
     try {
-      setSubmitting(true);
-      setError(null);
-      await api.correctionRequests.review(reviewingReq.id, action, adminNotes.trim());
+      await reviewMutation.mutateAsync({
+        id: reviewingReq.id,
+        action,
+        notes: adminNotes.trim(),
+      });
       setSuccessMessage(
         `Correction request for ${reviewingReq.receiptNumber} was ${action === 'APPROVE' ? 'APPROVED' : 'REJECTED'}.`
       );
       setReviewingReq(null);
       setAdminNotes('');
-      loadRequests();
-    } catch (err: any) {
-      setError(err.message || 'Failed to review request');
-    } finally {
-      setSubmitting(false);
+    } catch {
+      // surfaced through onError
     }
   };
 

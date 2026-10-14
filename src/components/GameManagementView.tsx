@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { Game, GameCategory, AppSettings } from '../types/index.ts';
 import { api } from '../lib/api.ts';
+import { queryClient, queryKeys } from '../lib/queryClient.ts';
 import { formatNaira, nairaToKobo, koboToNaira } from '../lib/utils.ts';
 import {
   Gamepad2,
@@ -19,8 +21,6 @@ import {
 import { GameCatalogSkeleton, GameDataLoadingOverlay, GameInlineLoader } from './game-ui/index.ts';
 
 export function GameManagementView() {
-  const [games, setGames] = useState<Game[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -28,8 +28,7 @@ export function GameManagementView() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingGame, setEditingGame] = useState<Game | null>(null);
 
-  // Global coin price (one price for ALL coin games)
-  const [coinPrice, setCoinPrice] = useState<AppSettings | null>(null);
+  // Global coin price (one price for ALL coin games) — derived from the settings query below
   const [coinPriceInput, setCoinPriceInput] = useState('500');
   const [savingCoinPrice, setSavingCoinPrice] = useState(false);
 
@@ -41,27 +40,43 @@ export function GameManagementView() {
   const [formCoinsRequired, setFormCoinsRequired] = useState('4');
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    loadGames();
-  }, []);
+  const gamesQuery = useQuery({
+    queryKey: queryKeys.games(true), // all = true for admin
+    queryFn: () => api.games.list(true),
+    refetchInterval: 30_000,
+  });
+  const settingsQuery = useQuery({
+    queryKey: queryKeys.settings(),
+    queryFn: () => api.settings.get(),
+    refetchInterval: 30_000,
+  });
 
-  const loadGames = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const [gamesRes, settingsRes] = await Promise.all([
-        api.games.list(true), // all = true for admin
-        api.settings.get(),
-      ]);
-      setGames(gamesRes.games);
-      setCoinPrice(settingsRes.settings);
-      setCoinPriceInput(koboToNaira(settingsRes.settings.coinPriceKobo).toString());
-    } catch (err: any) {
-      setError(err.message || 'Failed to load games catalog');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const games = gamesQuery.data?.games || [];
+  const loading = gamesQuery.isLoading || settingsQuery.isLoading;
+  const coinPrice: AppSettings | null = settingsQuery.data?.settings ?? null;
+
+  useEffect(() => {
+    const err = gamesQuery.error || settingsQuery.error;
+    if (err) setError((err as any).message || 'Failed to load games catalog');
+  }, [gamesQuery.error, settingsQuery.error]);
+
+  // Seed the price input once so focus refetches never clobber in-progress typing
+  const priceInputInitRef = useRef(false);
+  useEffect(() => {
+    if (!settingsQuery.data || priceInputInitRef.current) return;
+    priceInputInitRef.current = true;
+    setCoinPriceInput(koboToNaira(settingsQuery.data.settings.coinPriceKobo).toString());
+  }, [settingsQuery.data]);
+
+  const saveCoinPriceMutation = useMutation({
+    mutationFn: (kobo: number) => api.settings.updateCoinPrice(kobo),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['settings'] });
+      queryClient.invalidateQueries({ queryKey: ['coinPrice'] });
+      queryClient.invalidateQueries({ queryKey: ['games'] });
+    },
+    onError: (err: any) => setError(err.message || 'Failed to update coin price'),
+  });
 
   const handleSaveCoinPrice = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -73,13 +88,11 @@ export function GameManagementView() {
     try {
       setSavingCoinPrice(true);
       setError(null);
-      const res = await api.settings.updateCoinPrice(kobo);
-      setCoinPrice(res.settings);
+      const res = await saveCoinPriceMutation.mutateAsync(kobo);
       setCoinPriceInput(koboToNaira(res.settings.coinPriceKobo).toString());
       setSuccessMessage(`Global coin price updated to ${formatNaira(res.settings.coinPriceKobo)} — all coin games re-priced instantly.`);
-      loadGames();
-    } catch (err: any) {
-      setError(err.message || 'Failed to update coin price');
+    } catch {
+      // surfaced through onError
     } finally {
       setSavingCoinPrice(false);
     }
@@ -103,18 +116,48 @@ export function GameManagementView() {
     setFormCoinsRequired(game.coinsRequired.toString());
   };
 
+  const toggleStatusMutation = useMutation({
+    mutationFn: (vars: { gameId: string; makeActive: boolean }) =>
+      api.games.toggleStatus(vars.gameId, vars.makeActive),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['games'] }),
+    onError: (err: any) => setError(err.message || 'Failed to toggle status'),
+  });
+
   const handleToggleStatus = async (game: Game) => {
+    setError(null);
     try {
-      setError(null);
-      await api.games.toggleStatus(game.id, !game.isActive);
+      await toggleStatusMutation.mutateAsync({ gameId: game.id, makeActive: !game.isActive });
       setSuccessMessage(
         `Game "${game.name}" was ${!game.isActive ? 'activated' : 'deactivated'}. Historical records remain preserved.`
       );
-      loadGames();
-    } catch (err: any) {
-      setError(err.message || 'Failed to toggle status');
+    } catch {
+      // surfaced through onError
     }
   };
+
+  const saveGameMutation = useMutation({
+    mutationFn: (vars: {
+      gameId?: string;
+      name: string;
+      category: GameCategory;
+      description: string;
+      standardPriceKobo: number;
+      coinsRequired: number;
+    }) => {
+      const body = {
+        name: vars.name,
+        category: vars.category,
+        description: vars.description,
+        standardPriceKobo: vars.standardPriceKobo,
+        coinsRequired: vars.coinsRequired,
+      };
+      return vars.gameId ? api.games.update(vars.gameId, body) : api.games.create(body);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['games'] });
+    },
+    onError: (err: any) => setError(err.message || 'Failed to save game'),
+  });
 
   const handleSaveGame = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -130,30 +173,24 @@ export function GameManagementView() {
       const standardPriceKobo = nairaToKobo(formStandardPriceNaira);
       const coinsRequired = parseInt(formCoinsRequired, 10) || 1;
 
+      await saveGameMutation.mutateAsync({
+        gameId: editingGame?.id,
+        name: formName.trim(),
+        category: formCategory,
+        description: formDescription.trim(),
+        standardPriceKobo,
+        coinsRequired,
+      });
+
       if (editingGame) {
-        await api.games.update(editingGame.id, {
-          name: formName.trim(),
-          description: formDescription.trim(),
-          standardPriceKobo,
-          coinsRequired,
-        });
         setSuccessMessage(`Game "${formName}" pricing and configuration updated successfully.`);
         setEditingGame(null);
       } else {
-        await api.games.create({
-          name: formName.trim(),
-          category: formCategory,
-          description: formDescription.trim(),
-          standardPriceKobo,
-          coinsRequired,
-        });
         setSuccessMessage(`New game "${formName}" added to catalog.`);
         setShowAddModal(false);
       }
-
-      loadGames();
-    } catch (err: any) {
-      setError(err.message || 'Failed to save game');
+    } catch {
+      // surfaced through onError
     } finally {
       setSaving(false);
     }

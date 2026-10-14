@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { DailyReconciliation } from '../types/index.ts';
 import { api } from '../lib/api.ts';
+import { queryClient, queryKeys } from '../lib/queryClient.ts';
 import { formatNaira, getTodayLagosString, formatLagosDate, formatLagosDateTime, nairaToKobo, koboToNaira } from '../lib/utils.ts';
 import { useAuth } from '../context/AuthContext.tsx';
 import {
@@ -22,9 +24,7 @@ import { GameCardSkeleton, GameTableSkeleton, GameDataLoadingOverlay, GameInline
 export function ReconciliationView() {
   const { user } = useAuth();
   const [selectedDate, setSelectedDate] = useState<string>(getTodayLagosString());
-  const [reconciliation, setReconciliation] = useState<DailyReconciliation | null>(null);
-  const [isSaved, setIsSaved] = useState<boolean>(false);
-  const [loading, setLoading] = useState<boolean>(true);
+  // reconciliation / isSaved / loading are derived from the query below
   const [saving, setSaving] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -42,36 +42,37 @@ export function ReconciliationView() {
   const [reopenReason, setReopenReason] = useState<string>('');
   const [reopening, setReopening] = useState<boolean>(false);
 
+  const {
+    data: recRes,
+    isLoading: loading,
+    error: queryError,
+  } = useQuery({
+    queryKey: queryKeys.reconciliation(selectedDate),
+    queryFn: () => api.reconciliation.getDay(selectedDate),
+    refetchInterval: 20_000,
+  });
+  const reconciliation: DailyReconciliation | null = recRes?.reconciliation ?? null;
+  const isSaved = recRes?.isSaved ?? false;
+
   useEffect(() => {
-    loadReconciliationForDate(selectedDate);
-  }, [selectedDate]);
+    if (queryError) setError((queryError as any).message || 'Failed to load reconciliation records');
+  }, [queryError]);
 
-  const loadReconciliationForDate = async (date: string) => {
-    try {
-      setLoading(true);
-      setError(null);
-      setSuccessMessage(null);
-      const res = await api.reconciliation.getDay(date);
-      setReconciliation(res.reconciliation);
-      setIsSaved(res.isSaved);
-
-      // Populate input states
-      setActualCashNaira(koboToNaira(res.reconciliation.actualCashKobo).toString());
-      setActualPosNaira(koboToNaira(res.reconciliation.actualPosKobo).toString());
-      setActualTransferNaira(koboToNaira(res.reconciliation.actualTransferKobo).toString());
-      setPosTerminalRef(res.reconciliation.posTerminalReference || '');
-      setBankSettlementNaira(
-        res.reconciliation.bankSettlementTotalKobo !== undefined
-          ? koboToNaira(res.reconciliation.bankSettlementTotalKobo).toString()
-          : ''
-      );
-      setNotes(res.reconciliation.notes || '');
-    } catch (err: any) {
-      setError(err.message || 'Failed to load reconciliation records');
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Populate the count inputs once per business date (refetches never clobber in-progress typing)
+  const inputsInitForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!recRes || inputsInitForRef.current === selectedDate) return;
+    inputsInitForRef.current = selectedDate;
+    const r = recRes.reconciliation;
+    setActualCashNaira(koboToNaira(r.actualCashKobo).toString());
+    setActualPosNaira(koboToNaira(r.actualPosKobo).toString());
+    setActualTransferNaira(koboToNaira(r.actualTransferKobo).toString());
+    setPosTerminalRef(r.posTerminalReference || '');
+    setBankSettlementNaira(
+      r.bankSettlementTotalKobo !== undefined ? koboToNaira(r.bankSettlementTotalKobo).toString() : ''
+    );
+    setNotes(r.notes || '');
+  }, [recRes, selectedDate]);
 
   // Calculated live values
   const inputCashKobo = nairaToKobo(actualCashNaira);
@@ -91,6 +92,16 @@ export function ReconciliationView() {
 
   const isLocked = isSaved && reconciliation?.status === 'BALANCED';
 
+  const saveMutation = useMutation({
+    mutationFn: (vars: any) => api.reconciliation.saveDay(selectedDate, vars),
+    onSuccess: res => {
+      queryClient.invalidateQueries({ queryKey: ['reconciliation'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      setSuccessMessage(`Daily reconciliation successfully saved with status: ${res.reconciliation.status}`);
+    },
+    onError: (err: any) => setError(err.message || 'Failed to save reconciliation'),
+  });
+
   const handleSaveReconciliation = async (statusOverride?: string) => {
     if (isLocked) {
       setError('This business date is locked and reconciled. Please reopen it first to modify totals.');
@@ -102,7 +113,7 @@ export function ReconciliationView() {
       setError(null);
       setSuccessMessage(null);
 
-      const res = await api.reconciliation.saveDay(selectedDate, {
+      await saveMutation.mutateAsync({
         actualCashKobo: inputCashKobo,
         actualPosKobo: inputPosKobo,
         actualTransferKobo: inputTransferKobo,
@@ -112,16 +123,24 @@ export function ReconciliationView() {
         statusOverride,
         isReopenedEdit: reconciliation?.status === 'REOPENED',
       });
-
-      setReconciliation(res.reconciliation);
-      setIsSaved(true);
-      setSuccessMessage(`Daily reconciliation successfully saved with status: ${res.reconciliation.status}`);
-    } catch (err: any) {
-      setError(err.message || 'Failed to save reconciliation');
+    } catch {
+      // surfaced through onError
     } finally {
       setSaving(false);
     }
   };
+
+  const reopenMutation = useMutation({
+    mutationFn: (reason: string) => api.reconciliation.reopen(selectedDate, reason),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reconciliation'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      setShowReopenModal(false);
+      setReopenReason('');
+      setSuccessMessage(`Reconciliation record for ${selectedDate} has been reopened for authorized adjustment.`);
+    },
+    onError: (err: any) => setError(err.message || 'Failed to reopen reconciliation'),
+  });
 
   const handleReopen = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -133,13 +152,9 @@ export function ReconciliationView() {
     try {
       setReopening(true);
       setError(null);
-      const res = await api.reconciliation.reopen(selectedDate, reopenReason.trim());
-      setReconciliation(res.reconciliation);
-      setShowReopenModal(false);
-      setReopenReason('');
-      setSuccessMessage(`Reconciliation record for ${selectedDate} has been reopened for authorized adjustment.`);
-    } catch (err: any) {
-      setError(err.message || 'Failed to reopen reconciliation');
+      await reopenMutation.mutateAsync(reopenReason.trim());
+    } catch {
+      // surfaced through onError
     } finally {
       setReopening(false);
     }
