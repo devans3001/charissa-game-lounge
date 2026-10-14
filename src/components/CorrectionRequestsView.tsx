@@ -34,14 +34,16 @@ export function CorrectionRequestsView() {
     error: queryError,
   } = useQuery({
     queryKey: queryKeys.correctionRequests(),
-    queryFn: async () => (await api.correctionRequests.list()).requests,
+    queryFn: async () => (await api.correctionRequests.list()),
     refetchInterval: 12_000,
   });
-  const requests = data || [];
+  const requests = data?.requests ?? [];
 
-  useEffect(() => {
-    if (queryError) setError((queryError as any).message || 'Failed to load correction requests');
-  }, [queryError]);
+  console.log(requests,data);
+
+  if (queryError) {
+    setError((queryError as any).message || 'Failed to load correction requests');
+  }
 
   const reviewMutation = useMutation({
     mutationFn: (vars: { id: string; action: 'APPROVE' | 'REJECT'; notes: string }) =>

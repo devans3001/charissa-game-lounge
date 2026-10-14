@@ -1,7 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect } from 'react';
+import { createBrowserRouter, RouterProvider, Outlet, Navigate, useRouteError } from 'react-router';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { queryClient } from './lib/queryClient.ts';
 import { AuthProvider, useAuth } from './context/AuthContext.tsx';
 import { LoginView } from './components/LoginView.tsx';
-import { Navigation, ActiveTab } from './components/Navigation.tsx';
+import { Navigation } from './components/Navigation.tsx';
 import { NewSaleView } from './components/NewSaleView.tsx';
 import { DashboardView } from './components/DashboardView.tsx';
 import { ReconciliationView } from './components/ReconciliationView.tsx';
@@ -13,28 +16,11 @@ import { CorrectionRequestsView } from './components/CorrectionRequestsView.tsx'
 import { CoinVaultView } from './components/CoinVaultView.tsx';
 import { BankAccountsView } from './components/BankAccountsView.tsx';
 import { GameBootLoadingScreen } from './components/game-ui/index.ts';
-import { QueryClientProvider } from '@tanstack/react-query';
-import { queryClient } from './lib/queryClient.ts';
 
-
-/// let each section have its own page/route, you wiil need to set up a router like react-router-dom
-
-
-
-function MainApp() {
+// ========== 1. Layout: Shared shell (boot screen + navigation bar + Outlet) ==========
+function RootLayout() {
   const { user, isLoading } = useAuth();
-  const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
-
-  // Set intelligent initial tab on login
-  React.useEffect(() => {
-    if (user?.role === 'CASHIER') {
-      setActiveTab('newsale');
-    } else if (user?.role === 'ADMIN') {
-      setActiveTab('dashboard');
-    }
-  }, [user?.role]);
-
-  const [bootComplete, setBootComplete] = useState<boolean>(false);
+  const [bootComplete, setBootComplete] = React.useState(false);
 
   if (isLoading || !bootComplete) {
     return (
@@ -49,38 +35,90 @@ function MainApp() {
     return <LoginView />;
   }
 
-  const isAdmin = user.role === 'ADMIN';
-
+  // Navigation no longer needs activeTab / onSelectTab props, uses NavLink internally for automatic highlighting
   return (
-    <Navigation activeTab={activeTab} onSelectTab={setActiveTab}>
-      {activeTab === 'newsale' && <NewSaleView />}
-      {activeTab === 'dashboard' && (
-        <DashboardView
-          onNavigateToReconciliation={() => setActiveTab('reconciliation')}
-          onNavigateToTransactions={() => setActiveTab('transactions')}
-          onNavigateToNewSale={() => setActiveTab('newsale')}
-        />
-      )}
-      {activeTab === 'transactions' && (
-        <TransactionsView onNavigateToFixRequests={() => setActiveTab('correction_requests')} />
-      )}
-      {activeTab === 'reconciliation' && (isAdmin ? <ReconciliationView /> : <DashboardView />)}
-      {activeTab === 'games' && (isAdmin ? <GameManagementView /> : <NewSaleView />)}
-      {activeTab === 'cashiers' && (isAdmin ? <CashierManagementView /> : <DashboardView />)}
-      {activeTab === 'coinvault' && <CoinVaultView />}
-      {activeTab === 'bank_accounts' && (isAdmin ? <BankAccountsView /> : <DashboardView />)}
-      {activeTab === 'correction_requests' && <CorrectionRequestsView />}
-      {activeTab === 'audit' && (isAdmin ? <AuditLogsView /> : <DashboardView />)}
+    <Navigation>
+      <Outlet />
     </Navigation>
   );
 }
 
+// ========== 2. Admin Guard: Redirect non-admin users ==========
+function AdminGuard({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  if (user?.role !== 'ADMIN') {
+    return <Navigate to="/" replace />;
+  }
+  return <>{children}</>;
+}
+
+// ========== 3. Cashier Redirect: After cashier login, redirect to newsale ==========
+function CashierRedirect() {
+  const { user } = useAuth();
+  // if (user?.role === 'CASHIER') {
+  //   return <Navigate to="/newsale" replace />;
+  // }
+  return <DashboardView />;
+}
+
+function RouteErrorBoundary() {
+  const error = useRouteError();
+  console.error('Route error:', error);
+  return (
+    <div className="p-8 text-slate-200">
+      <h1 className="text-xl font-bold mb-2">Something went wrong</h1>
+      <pre className="text-xs text-rose-400 whitespace-pre-wrap">
+        {error instanceof Error ? error.message : String(error)}
+      </pre>
+    </div>
+  );
+}
+
+
+// ========== 4. Router Configuration ==========
+const router = createBrowserRouter([
+  {
+    path: '/',
+    element: (
+      <AuthProvider>
+        <RootLayout />
+      </AuthProvider>
+    ),
+     errorElement: <RouteErrorBoundary />,
+    children: [
+      // Default route: cashier redirected to newsale, admin sees Dashboard
+      { index: true, element: <CashierRedirect /> },
+
+      { path: 'newsale', element: <NewSaleView /> },
+      { path: 'transactions', element: <TransactionsView /> },
+      { path: 'reconciliation', element: (
+        <AdminGuard><ReconciliationView /></AdminGuard>
+      )},
+      { path: 'games', element: (
+        <AdminGuard><GameManagementView /></AdminGuard>
+      )},
+      { path: 'cashiers', element: (
+        <AdminGuard><CashierManagementView /></AdminGuard>
+      )},
+      { path: 'coinvault', element: <CoinVaultView /> },
+      { path: 'bank_accounts', element: (
+        <AdminGuard><BankAccountsView /></AdminGuard>
+      )},
+      { path: 'correction_requests', element: <CorrectionRequestsView /> },
+      { path: 'audit', element: (
+        <AdminGuard><AuditLogsView /></AdminGuard>
+      )},
+    ],
+  },
+]);
+
+// ========== 5. App Export ==========
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <MainApp />
-      </AuthProvider>
+      
+        <RouterProvider router={router} />
+      {/* </AuthProvider> */}
     </QueryClientProvider>
   );
 }
