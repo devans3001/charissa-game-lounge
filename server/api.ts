@@ -867,9 +867,12 @@ api.get('/transactions', authenticate, async (req: AuthRequest, res) => {
     }
   }
 
-  // Filter by category
+  // Filter by category (a transaction matches if any of its items carry the category)
   if (req.query.category) {
-    list = list.filter(t => t.gameCategory === req.query.category);
+    list = list.filter(t =>
+      (Array.isArray(t.items) && t.items.length ? t.items : [{ gameCategory: t.gameCategory }])
+        .some(i => i.gameCategory === req.query.category)
+    );
   }
 
   // Filter by game
@@ -1909,23 +1912,37 @@ api.get('/dashboard/stats', authenticate, async (req: AuthRequest, res) => {
     else if (t.paymentMethod === 'POS') posSalesKobo += t.totalAmountKobo;
     else if (t.paymentMethod === 'BANK_TRANSFER') transferSalesKobo += t.totalAmountKobo;
 
-    // Category
-    if (categoryMap[t.gameCategory]) {
-      categoryMap[t.gameCategory].revenueKobo += t.totalAmountKobo;
-      categoryMap[t.gameCategory].count += 1;
-    }
+    // Category & game breakdown come from each transaction's items so a mixed
+    // tab credits every category it actually contains. Fall back to the summary
+    // fields for legacy records that have no items.
+    const lines = Array.isArray(t.items) && t.items.length
+      ? t.items.map(i => ({
+          cat: i.gameCategory,
+          gameId: i.gameId,
+          gameName: i.gameName,
+          amount: i.totalAmountKobo,
+        }))
+      : [{ cat: t.gameCategory, gameId: t.gameId, gameName: t.gameName, amount: t.totalAmountKobo }];
 
-    // Game
-    if (!gameMap[t.gameId]) {
-      gameMap[t.gameId] = {
-        gameName: t.gameName,
-        category: t.gameCategory,
-        revenueKobo: 0,
-        count: 0,
-      };
+    for (const line of lines) {
+      // Category
+      if (categoryMap[line.cat]) {
+        categoryMap[line.cat].revenueKobo += line.amount;
+        categoryMap[line.cat].count += 1;
+      }
+
+      // Game
+      if (!gameMap[line.gameId]) {
+        gameMap[line.gameId] = {
+          gameName: line.gameName,
+          category: line.cat,
+          revenueKobo: 0,
+          count: 0,
+        };
+      }
+      gameMap[line.gameId].revenueKobo += line.amount;
+      gameMap[line.gameId].count += 1;
     }
-    gameMap[t.gameId].revenueKobo += t.totalAmountKobo;
-    gameMap[t.gameId].count += 1;
 
     // Cashier
     if (!cashierMap[t.cashierId]) {
@@ -2744,7 +2761,7 @@ api.get('/export/transactions.csv', authenticate, requireAdmin, async (req: Auth
 
   if (req.query.startDate) list = list.filter(t => t.businessDate >= (req.query.startDate as string));
   if (req.query.endDate) list = list.filter(t => t.businessDate <= (req.query.endDate as string));
-  if (req.query.category) list = list.filter(t => t.gameCategory === req.query.category);
+  if (req.query.category) list = list.filter(t => (Array.isArray(t.items) && t.items.length ? t.items : [{ gameCategory: t.gameCategory }]).some(i => i.gameCategory === req.query.category));
   if (req.query.paymentMethod) list = list.filter(t => t.paymentMethod === req.query.paymentMethod);
   if (req.query.cashierId) list = list.filter(t => t.cashierId === req.query.cashierId);
   if (req.query.status) list = list.filter(t => t.status === req.query.status);
