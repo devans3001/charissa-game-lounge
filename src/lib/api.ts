@@ -367,6 +367,10 @@ export const api = {
         totalPages: number;
       }>(`/api/audit-logs?${query.toString()}`);
     },
+    clear: () =>
+      request<{ success: boolean; count: number }>('/api/audit-logs/clear', {
+        method: 'DELETE',
+      }),
   },
 
   coins: {

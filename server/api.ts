@@ -11,7 +11,9 @@ import {
   getLagosIsoString,
   getCoinPriceKobo,
   ensureSettings,
+  getFirestore,
 } from './db.ts';
+import { getDocs, collection, deleteDoc, doc } from 'firebase/firestore';
 import {
   authenticate,
   requireAdmin,
@@ -2690,6 +2692,17 @@ api.get('/audit-logs', authenticate, requireAdmin, async (req, res) => {
     limit,
     totalPages: Math.ceil(total / limit),
   });
+});
+
+api.delete('/audit-logs/clear', authenticate, requireAdmin, async (req: AuthRequest, res) => {
+  const db = await readDb();
+  const fsDb = getFirestore();
+  const snap = await getDocs(collection(fsDb, 'auditLogs'));
+  const batchDeletes = snap.docs.map(d => deleteDoc(doc(fsDb, 'auditLogs', d.id)));
+  await Promise.all(batchDeletes);
+  db.auditLogs = [];
+  await saveDb(db);
+  res.json({ success: true, count: snap.docs.length });
 });
 
 // ==========================================

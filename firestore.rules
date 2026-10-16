@@ -58,10 +58,9 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    // Audit Logs - IMMUTABLE (Cannot be modified or deleted)
+    // Audit Logs
     match /auditLogs/{logId} {
-      allow read, create: if true;
-      allow update, delete: if false;
+      allow read, write: if true;
     }
 
     // Test connection doc

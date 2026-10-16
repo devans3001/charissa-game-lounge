@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { AuditLog } from '../types/index.ts';
 import { api } from '../lib/api.ts';
-import { queryKeys } from '../lib/queryClient.ts';
+import { queryClient, queryKeys } from '../lib/queryClient.ts';
 import { formatLagosDateTime, formatLagosDate } from '../lib/utils.ts';
 import {
   ShieldCheck,
@@ -11,19 +11,20 @@ import {
   ChevronLeft,
   ChevronRight,
   AlertCircle,
+  CheckCircle2,
   FileText,
   User,
   Clock,
   Eye,
   X,
   LayoutGrid,
-  List
+  List,
+  Trash2
 } from 'lucide-react';
-import { GameTableSkeleton, GameInlineLoader } from './game-ui/index.ts';
+import { GameTableSkeleton, GameInlineLoader, GameDataLoadingOverlay } from './game-ui/index.ts';
 
 export function AuditLogsView() {
   const [page, setPage] = useState<number>(1);
-
   const [viewMode, setViewMode] = useState<'AUTO' | 'CARD' | 'TABLE'>('AUTO');
 
   // Filters
@@ -36,6 +37,9 @@ export function AuditLogsView() {
   const [endDate, setEndDate] = useState<string>('');
 
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
+  const [showClearConfirm, setShowClearConfirm] = useState<boolean>(false);
+  const [successToast, setSuccessToast] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const {
     data,
@@ -50,7 +54,21 @@ export function AuditLogsView() {
   const logs = data?.logs || [];
   const total = data?.total || 0;
   const totalPages = data?.totalPages || 1;
-  const error = queryError ? ((queryError as any).message || 'Failed to load audit logs') : null;
+  const error = actionError || (queryError ? ((queryError as any).message || 'Failed to load audit logs') : null);
+
+  const clearMutation = useMutation({
+    mutationFn: () => api.auditLogs.clear(),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['auditLogs'] });
+      setShowClearConfirm(false);
+      setActionError(null);
+      setSuccessToast(`Audit log database cleared successfully.`);
+      setTimeout(() => setSuccessToast(null), 4500);
+    },
+    onError: (err: any) => {
+      setActionError(err.message || 'Failed to clear audit logs');
+    },
+  });
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -79,6 +97,17 @@ export function AuditLogsView() {
             </div>
           )}
 
+          {/* Delete all audit logs button */}
+          <button
+            type="button"
+            onClick={() => setShowClearConfirm(true)}
+            className="px-3 py-1.5 rounded-xl border border-rose-900/60 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer min-h-[36px]"
+            title="Permanently delete all audit log records"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+            <span className="hidden sm:inline">Clear All Logs</span>
+          </button>
+
           {/* View Toggle */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-0.5 flex items-center self-start sm:self-auto">
           <button
@@ -104,6 +133,13 @@ export function AuditLogsView() {
         </div>
         </div>
       </div>
+
+      {successToast && (
+        <div className="p-4 bg-emerald-950/60 border border-emerald-800 rounded-xl flex items-center gap-3 text-emerald-200 text-sm">
+          <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+          <span>{successToast}</span>
+        </div>
+      )}
 
       {error && (
         <div className="p-4 bg-red-950/60 border border-red-800 rounded-xl flex items-center gap-3 text-red-200 text-sm">
@@ -403,6 +439,61 @@ export function AuditLogsView() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Clear All Audit Logs Confirmation Modal */}
+      {showClearConfirm && (
+        <div onClick={() => setShowClearConfirm(false)} className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div onClick={e => e.stopPropagation()} className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 text-slate-100 shadow-2xl relative">
+            <button
+              type="button"
+              onClick={() => setShowClearConfirm(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-400 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Delete All Audit Logs?</h3>
+                <p className="text-xs text-slate-400">This action permanently deletes all audit history.</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed bg-slate-950 p-3.5 rounded-xl border border-slate-800 mb-6">
+              You are about to purge all security, authorization, and financial write logs from Firestore. This cannot be undone.
+            </p>
+
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowClearConfirm(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={clearMutation.isPending}
+                onClick={() => clearMutation.mutate()}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-rose-600/30 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                {clearMutation.isPending ? 'Deleting...' : 'Yes, Delete All Logs'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {clearMutation.isPending && (
+        <GameDataLoadingOverlay
+          label="PURGING SECURITY AUDIT MATRIX..."
+          sublabel="Deleting immutable audit records from persistent Firestore storage..."
+        />
       )}
     </div>
   );

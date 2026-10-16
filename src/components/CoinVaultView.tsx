@@ -460,7 +460,7 @@ export function CoinVaultView() {
                     <div className="flex items-start justify-between">
                       <div>
                         <span className="font-bold text-white block">{a.cashierName}</span>
-                        <span className="text-[11px] text-slate-400 font-mono">{a.businessDate}</span>
+                        <span className="text-[11px] text-slate-400 font-mono">{formatLagosDateTime(a.timestamp)}</span>
                       </div>
                       <div className="text-right">
                         <span className="font-mono text-amber-300 font-bold text-sm block">
@@ -497,7 +497,7 @@ export function CoinVaultView() {
                 <table className="w-full text-left text-xs min-w-[580px]">
                   <thead>
                     <tr className="border-b border-slate-800 text-slate-400">
-                      <th className="pb-2 font-semibold">Date</th>
+                      <th className="pb-2 font-semibold">Date & Time (Lagos)</th>
                       <th className="pb-2 font-semibold">Cashier</th>
                       <th className="pb-2 font-semibold text-right">Coins</th>
                       <th className="pb-2 font-semibold">Allocated By</th>
@@ -508,7 +508,7 @@ export function CoinVaultView() {
                   <tbody className="divide-y divide-slate-800/60">
                     {allocations.slice(0, 20).map(a => (
                       <tr key={a.id} className="hover:bg-slate-800/40">
-                        <td className="py-2.5 text-slate-300 font-mono">{a.businessDate}</td>
+                        <td className="py-2.5 text-slate-300 font-mono whitespace-nowrap">{formatLagosDateTime(a.timestamp)}</td>
                         <td className="py-2.5 text-white font-semibold">{a.cashierName}</td>
                         <td className="py-2.5 text-right font-mono text-amber-300 font-bold">{a.initialCoins}</td>
                         <td className="py-2.5 text-slate-400">{a.allocatedByName}</td>

@@ -14,7 +14,17 @@ async function startServer() {
   await probeFirestoreRules();
 
   const app = express();
-  const PORT = parseInt(process.env.PORT || '3000', 10);
+  
+  // Dev server must always bind to port 3000 (or CLI --port).
+  // Avoid using process.env.PORT in development as it is set to 8080 by container/nginx.
+  let PORT = 3000;
+  const portArgIdx = process.argv.indexOf('--port');
+  if (portArgIdx !== -1 && process.argv[portArgIdx + 1]) {
+    PORT = parseInt(process.argv[portArgIdx + 1], 10);
+  } else if (process.env.NODE_ENV === 'production' && process.env.PORT) {
+    PORT = parseInt(process.env.PORT, 10);
+  }
+
   const httpServer = http.createServer(app);
 
   // Parse JSON payloads
@@ -41,6 +51,7 @@ async function startServer() {
       server: {
         middlewareMode: true,
         hmr: false,
+        ws: false,
       },
       appType: 'spa',
     });

@@ -16,13 +16,15 @@ import {
   FileQuestion,
   KeyRound,
   Coins,
-  Landmark
+  Landmark,
+  BookmarkCheck
 } from 'lucide-react';
 
 // Route paths map to your URL segments
 export type NavPath =
   | '/'
   | '/newsale'
+  | '/tabs'
   | '/transactions'
   | '/reconciliation'
   | '/games'
@@ -50,6 +52,7 @@ export function Navigation() {
     ? [
         { to: '/', label: 'Dashboard', icon: LayoutDashboard },
         { to: '/newsale', label: 'New Sale (POS)', icon: PlusCircle },
+        { to: '/tabs', label: 'Saved Tabs (Open)', icon: BookmarkCheck },
         { to: '/transactions', label: 'All Transactions', icon: Receipt },
         { to: '/reconciliation', label: 'Daily Reconciliation', icon: Scale },
         { to: '/coinvault', label: 'Coin Vault', icon: Coins },
@@ -61,6 +64,7 @@ export function Navigation() {
       ]
     : [
         { to: '/newsale', label: 'New Sale (POS)', icon: PlusCircle },
+        { to: '/tabs', label: 'Saved Tabs', icon: BookmarkCheck },
         { to: '/coinvault', label: 'My Coin Float', icon: Coins },
         { to: '/transactions', label: 'My Transactions', icon: Receipt },
         { to: '/', label: 'My Shift Overview', icon: LayoutDashboard },

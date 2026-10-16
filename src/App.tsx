@@ -15,6 +15,7 @@ import { AuditLogsView } from './components/AuditLogsView.tsx';
 import { CorrectionRequestsView } from './components/CorrectionRequestsView.tsx';
 import { CoinVaultView } from './components/CoinVaultView.tsx';
 import { BankAccountsView } from './components/BankAccountsView.tsx';
+import { SavedTabsView } from './components/SavedTabsView.tsx';
 import { GameBootLoadingScreen } from './components/game-ui/index.ts';
 
 // ========== 1. Layout: Shared shell (boot screen + navigation bar + Outlet) ==========
@@ -35,12 +36,8 @@ function RootLayout() {
     return <LoginView />;
   }
 
-  // Navigation no longer needs activeTab / onSelectTab props, uses NavLink internally for automatic highlighting
-  return (
-    <Navigation>
-      <Outlet />
-    </Navigation>
-  );
+  // Navigation renders <Outlet /> internally
+  return <Navigation />;
 }
 
 // ========== 2. Admin Guard: Redirect non-admin users ==========
@@ -90,6 +87,7 @@ const router = createBrowserRouter([
       { index: true, element: <CashierRedirect /> },
 
       { path: 'newsale', element: <NewSaleView /> },
+      { path: 'tabs', element: <SavedTabsView /> },
       { path: 'transactions', element: <TransactionsView /> },
       { path: 'reconciliation', element: (
         <AdminGuard><ReconciliationView /></AdminGuard>

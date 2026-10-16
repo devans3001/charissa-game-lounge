@@ -291,13 +291,13 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
     mutationFn: (vars: { tabId: string | null; payload: any }) =>
       vars.tabId ? api.tabs.update(vars.tabId, vars.payload) : api.tabs.create(vars.payload),
     onSuccess: (res, vars) => {
-      setSelectedTabId(res.tab.id);
       queryClient.invalidateQueries({ queryKey: ['customerTabs'] });
       showToast(
         vars.tabId
-          ? `Saved updates to Tab #${res.tab.tabNumber} for ${res.tab.customerName} (${formatNaira(res.tab.totalAmountKobo)}). Kept open.`
-          : `Created & Saved Tab #${res.tab.tabNumber} for ${res.tab.customerName} (${formatNaira(res.tab.totalAmountKobo)}). Tab is kept open for later payment.`
+          ? `Saved updates to Tab #${res.tab.tabNumber} for ${res.tab.customerName} (${formatNaira(res.tab.totalAmountKobo)}). Switched to new customer.`
+          : `Saved Tab #${res.tab.tabNumber} for ${res.tab.customerName} (${formatNaira(res.tab.totalAmountKobo)}). Switched to new customer.`
       );
+      handleStartNewTab();
     },
     onError: (err: any) => setError(err.message || 'Failed to save customer tab'),
   });
