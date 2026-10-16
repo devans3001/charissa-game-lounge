@@ -1231,7 +1231,14 @@ api.get('/tabs', authenticate, async (req: AuthRequest, res) => {
     list = list.filter(t => t.status === 'OPEN');
   }
 
-  if (req.query.myTabs === 'true') {
+  // CASHIER ISOLATION: A cashier can ONLY see their own saved tabs.
+  // Another cashier cannot see another cashier's saved tabs.
+  // Admins can see all tabs across all cashiers, or filter by a specific cashier.
+  if (req.user!.role === 'CASHIER') {
+    list = list.filter(t => t.cashierId === req.user!.id);
+  } else if (req.query.cashierId && req.query.cashierId !== 'ALL') {
+    list = list.filter(t => t.cashierId === req.query.cashierId);
+  } else if (req.query.myTabs === 'true') {
     list = list.filter(t => t.cashierId === req.user!.id);
   }
 
@@ -1240,7 +1247,8 @@ api.get('/tabs', authenticate, async (req: AuthRequest, res) => {
     list = list.filter(t =>
       t.customerName.toLowerCase().includes(q) ||
       t.tabNumber.toLowerCase().includes(q) ||
-      (t.stationOrNote && t.stationOrNote.toLowerCase().includes(q))
+      (t.stationOrNote && t.stationOrNote.toLowerCase().includes(q)) ||
+      (t.cashierName && t.cashierName.toLowerCase().includes(q))
     );
   }
 
@@ -1342,6 +1350,12 @@ api.put('/tabs/:id', authenticate, async (req: AuthRequest, res) => {
     return;
   }
 
+  // Cashiers can only modify their own tabs; Admins can modify any tab
+  if (req.user!.role === 'CASHIER' && tab.cashierId !== req.user!.id) {
+    res.status(403).json({ error: 'You are only authorized to modify customer tabs created on your counter.' });
+    return;
+  }
+
   if (tab.status !== 'OPEN') {
     res.status(400).json({ error: 'Cannot modify a settled or cancelled customer tab.' });
     return;
@@ -1425,6 +1439,13 @@ api.delete('/tabs/:id', authenticate, async (req: AuthRequest, res) => {
   }
 
   const tab = db.customerTabs[tabIndex];
+
+  // Cashiers can only cancel their own tabs; Admins can cancel any tab
+  if (req.user!.role === 'CASHIER' && tab.cashierId !== req.user!.id) {
+    res.status(403).json({ error: 'You are only authorized to cancel customer tabs created on your counter.' });
+    return;
+  }
+
   if (tab.status === 'PAID') {
     res.status(400).json({ error: 'Paid customer tabs cannot be removed.' });
     return;
@@ -1443,8 +1464,10 @@ api.delete('/tabs/:id', authenticate, async (req: AuthRequest, res) => {
         tabNumber: tab.tabNumber,
         customerName: tab.customerName,
         totalAmountKobo: tab.totalAmountKobo,
+        cashierId: tab.cashierId,
+        cashierName: tab.cashierName,
       },
-      reason: 'Cancelled before payment',
+      reason: req.user!.id !== tab.cashierId ? `Admin cancelled tab created by ${tab.cashierName}` : 'Cancelled before payment',
     }
   );
 
@@ -1472,6 +1495,12 @@ api.post('/tabs/:id/checkout', authenticate, async (req: AuthRequest, res) => {
   const tab = db.customerTabs.find(t => t.id === req.params.id);
   if (!tab) {
     res.status(404).json({ error: 'Customer tab not found' });
+    return;
+  }
+
+  // Cashiers can only checkout their own tabs; Admins can checkout any tab
+  if (req.user!.role === 'CASHIER' && tab.cashierId !== req.user!.id) {
+    res.status(403).json({ error: 'You are only authorized to settle customer tabs created on your counter.' });
     return;
   }
 

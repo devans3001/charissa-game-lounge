@@ -34,5 +34,5 @@ export const queryKeys = {
   correctionRequests: () => ['correctionRequests'] as const,
   auditLogs: (params: Record<string, any>) => ['auditLogs', params] as const,
   bankAccounts: () => ['bankAccounts'] as const,
-  customerTabs: () => ['customerTabs'] as const,
+  customerTabs: (params?: { status?: string; cashierId?: string }) => ['customerTabs', params || {}] as const,
 };

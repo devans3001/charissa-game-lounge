@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { CustomerTab, PaymentMethod, Transaction } from '../types/index.ts';
+import { CustomerTab, PaymentMethod, Transaction, User as StaffUser } from '../types/index.ts';
 import { api } from '../lib/api.ts';
 import { queryClient, queryKeys } from '../lib/queryClient.ts';
 import { useAuth } from '../context/AuthContext.tsx';
@@ -25,7 +25,10 @@ import {
   RotateCcw,
   Check,
   Coins,
-  Receipt
+  Receipt,
+  Users,
+  ShieldCheck,
+  Filter
 } from 'lucide-react';
 import { GameCardSkeleton, GameTableSkeleton, GameInlineLoader, GameDataLoadingOverlay } from './game-ui/index.ts';
 
@@ -34,19 +37,18 @@ export function SavedTabsView() {
   const isAdmin = user?.role === 'ADMIN';
 
   const [statusFilter, setStatusFilter] = useState<'OPEN' | 'CLOSED' | 'ALL'>('OPEN');
+  const [cashierFilter, setCashierFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Modals
   const [selectedTabForCheckout, setSelectedTabForCheckout] = useState<CustomerTab | null>(null);
   const [selectedTabForDelete, setSelectedTabForDelete] = useState<CustomerTab | null>(null);
-  const [selectedTabToView, setSelectedTabToView] = useState<CustomerTab | null>(null);
   const [completedTxn, setCompletedTxn] = useState<Transaction | null>(null);
 
   // Checkout form
   const [payMethod, setPayMethod] = useState<PaymentMethod>('CASH');
   const [paymentRef, setPaymentRef] = useState<string>('');
   const [senderName, setSenderName] = useState<string>('');
-  const [amountTendered, setAmountTendered] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -55,10 +57,24 @@ export function SavedTabsView() {
     setTimeout(() => setToastMessage(null), 4500);
   };
 
-  // Queries
+  // Cashier list for Admin filter
+  const cashiersQuery = useQuery({
+    queryKey: queryKeys.cashiers(),
+    queryFn: async () => ((await api.cashiers.list()).cashiers as unknown as StaffUser[]).filter(c => c.isActive),
+    enabled: isAdmin,
+    refetchInterval: 30_000,
+  });
+  const cashiers = cashiersQuery.data || [];
+
+  // Tabs query (backend automatically enforces cashier isolation if user is CASHIER)
   const tabsQuery = useQuery({
-    queryKey: queryKeys.customerTabs(),
-    queryFn: async () => (await api.tabs.list()).tabs,
+    queryKey: queryKeys.customerTabs({ status: statusFilter, cashierId: isAdmin ? cashierFilter : undefined }),
+    queryFn: async () => {
+      const params: any = {};
+      if (statusFilter !== 'ALL') params.status = statusFilter;
+      if (isAdmin && cashierFilter !== 'ALL') params.cashierId = cashierFilter;
+      return (await api.tabs.list(params)).tabs;
+    },
     refetchInterval: 8_000,
   });
 
@@ -90,7 +106,7 @@ export function SavedTabsView() {
 
       setSelectedTabForCheckout(null);
       setCompletedTxn(res.transaction);
-      showToast(`Tab #${res.tab.tabNumber} successfully settled & closed (${formatNaira(res.tab.totalAmountKobo)}).`);
+      showToast(`Tab #${res.tab.tabNumber} (${res.tab.customerName}) settled & closed (${formatNaira(res.tab.totalAmountKobo)}).`);
     },
     onError: (err: any) => {
       setError(err.message || 'Failed to complete tab checkout');
@@ -144,9 +160,13 @@ export function SavedTabsView() {
   const totalUnpaidKobo = openTabs.reduce((s, t) => s + (t.totalAmountKobo || 0), 0);
   const activeStations = new Set(openTabs.map(t => t.stationOrNote).filter(Boolean)).size;
 
-  // Filter tabs
+  // Unique cashiers with open tabs (for Admin)
+  const uniqueCashiersWithTabs = Array.from(new Set(openTabs.map(t => t.cashierName).filter(Boolean)));
+
+  // Filter tabs client-side as well
   const filteredTabs = allTabs.filter(t => {
     if (statusFilter !== 'ALL' && t.status !== statusFilter) return false;
+    if (isAdmin && cashierFilter !== 'ALL' && t.cashierId !== cashierFilter) return false;
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
       const matchName = t.customerName?.toLowerCase().includes(q);
@@ -189,12 +209,23 @@ export function SavedTabsView() {
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
-            <BookmarkCheck className="w-6 h-6 text-indigo-400" />
-            Customer Open Tabs Management
-          </h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
+              <BookmarkCheck className="w-6 h-6 text-indigo-400" />
+              {isAdmin ? 'All Saved Customer Tabs' : 'My Saved Customer Tabs'}
+            </h2>
+            <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${
+              isAdmin
+                ? 'bg-purple-500/15 text-purple-300 border-purple-500/30'
+                : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+            }`}>
+              {isAdmin ? '👑 Admin Master View' : `👤 Counter: ${user?.name}`}
+            </span>
+          </div>
           <p className="text-xs text-slate-400 mt-0.5">
-            Real-time tracking of unpaid player sessions and open customer tabs across all cashier counters
+            {isAdmin
+              ? 'Real-time overview of open player sessions across all cashier counters. Each tab explicitly displays which cashier opened it.'
+              : 'Your active counter sessions. In accordance with counter isolation, other cashiers cannot view or modify your saved tabs.'}
           </p>
         </div>
 
@@ -228,11 +259,13 @@ export function SavedTabsView() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-1">
           <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 flex items-center justify-between">
-            <span>Open Unpaid Tabs</span>
+            <span>{isAdmin ? 'Open Tabs (All Counters)' : 'My Open Tabs'}</span>
             <BookmarkCheck className="w-4 h-4 text-indigo-400" />
           </div>
           <div className="text-2xl font-extrabold text-white font-mono">{openTabs.length}</div>
-          <div className="text-[11px] text-slate-400">Currently active sessions</div>
+          <div className="text-[11px] text-slate-400">
+            {isAdmin ? 'Total active sessions in lounge' : 'Active sessions on your station'}
+          </div>
         </div>
 
         <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-1">
@@ -244,14 +277,30 @@ export function SavedTabsView() {
           <div className="text-[11px] text-slate-400">Pending customer payment</div>
         </div>
 
-        <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-1">
-          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 flex items-center justify-between">
-            <span>Occupied Stations</span>
-            <Gamepad2 className="w-4 h-4 text-purple-400" />
+        {/* 3rd KPI card: Cashiers breakdown for Admin, Occupied Stations for Cashier */}
+        {isAdmin ? (
+          <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-1">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 flex items-center justify-between">
+              <span>Counters with Open Tabs</span>
+              <Users className="w-4 h-4 text-purple-400" />
+            </div>
+            <div className="text-2xl font-extrabold text-purple-300 font-mono">
+              {uniqueCashiersWithTabs.length} {uniqueCashiersWithTabs.length === 1 ? 'Cashier' : 'Cashiers'}
+            </div>
+            <div className="text-[11px] text-slate-400 truncate">
+              {uniqueCashiersWithTabs.length > 0 ? uniqueCashiersWithTabs.join(', ') : 'No open tabs currently'}
+            </div>
           </div>
-          <div className="text-2xl font-extrabold text-purple-300 font-mono">{activeStations}</div>
-          <div className="text-[11px] text-slate-400">Tagged station identifiers</div>
-        </div>
+        ) : (
+          <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-1">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 flex items-center justify-between">
+              <span>Occupied Stations</span>
+              <Gamepad2 className="w-4 h-4 text-purple-400" />
+            </div>
+            <div className="text-2xl font-extrabold text-purple-300 font-mono">{activeStations}</div>
+            <div className="text-[11px] text-slate-400">Tagged station identifiers</div>
+          </div>
+        )}
 
         <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-1">
           <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 flex items-center justify-between">
@@ -272,52 +321,76 @@ export function SavedTabsView() {
       </div>
 
       {/* Filter and Search Bar */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col lg:flex-row items-center justify-between gap-3">
         <div className="relative flex-1 w-full">
           <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
             type="text"
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            placeholder="Search by customer name, tab #, station/note, cashier, or game..."
+            placeholder={isAdmin ? "Search by customer, tab #, station, cashier name, or game..." : "Search your customer tabs by name, tab #, station, or game..."}
             className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:border-indigo-500 outline-none"
           />
         </div>
 
-        <div className="flex items-center gap-1.5 p-1 bg-slate-950 border border-slate-800 rounded-xl self-start sm:self-auto shrink-0">
-          <button
-            type="button"
-            onClick={() => setStatusFilter('OPEN')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
-              statusFilter === 'OPEN'
-                ? 'bg-indigo-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            Open ({openTabs.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => setStatusFilter('CLOSED')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
-              statusFilter === 'CLOSED'
-                ? 'bg-indigo-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            Closed / Settled
-          </button>
-          <button
-            type="button"
-            onClick={() => setStatusFilter('ALL')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
-              statusFilter === 'ALL'
-                ? 'bg-indigo-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            All Tabs ({allTabs.length})
-          </button>
+        <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
+          {/* Admin Cashier Selector */}
+          {isAdmin && (
+            <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1 text-xs">
+              <User className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+              <select
+                value={cashierFilter}
+                onChange={e => setCashierFilter(e.target.value)}
+                className="bg-transparent text-xs text-white focus:outline-none cursor-pointer pr-1"
+              >
+                <option value="ALL" className="bg-slate-900 text-white">
+                  All Cashiers ({uniqueCashiersWithTabs.length} active)
+                </option>
+                {cashiers.map(c => (
+                  <option key={c.id} value={c.id} className="bg-slate-900 text-white">
+                    Counter: {c.name} {openTabs.some(t => t.cashierId === c.id) ? '●' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Status Buttons */}
+          <div className="flex items-center gap-1 p-1 bg-slate-950 border border-slate-800 rounded-xl self-start sm:self-auto shrink-0">
+            <button
+              type="button"
+              onClick={() => setStatusFilter('OPEN')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                statusFilter === 'OPEN'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Open ({openTabs.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setStatusFilter('CLOSED')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                statusFilter === 'CLOSED'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Closed
+            </button>
+            <button
+              type="button"
+              onClick={() => setStatusFilter('ALL')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                statusFilter === 'ALL'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              All ({allTabs.length})
+            </button>
+          </div>
         </div>
       </div>
 
@@ -325,9 +398,9 @@ export function SavedTabsView() {
       {loading && allTabs.length === 0 ? (
         <GameTableSkeleton
           rows={6}
-          cols={5}
-          title="STREAMING OPEN CUSTOMER TABS"
-          subtitle="Querying real-time player counters, unpaid carts, and lounge station allocations..."
+          cols={6}
+          title="STREAMING SAVED CUSTOMER TABS"
+          subtitle="Querying cashier counters, unpaid carts, and lounge station allocations..."
         />
       ) : filteredTabs.length === 0 ? (
         <div className="p-12 text-center bg-slate-900 border border-slate-800 rounded-2xl space-y-2">
@@ -336,8 +409,12 @@ export function SavedTabsView() {
           <p className="text-xs text-slate-400 max-w-sm mx-auto">
             {searchQuery
               ? 'No customer tabs match your current search criteria. Try a different query.'
+              : cashierFilter !== 'ALL'
+              ? 'This cashier counter has no customer tabs in the selected status.'
               : statusFilter === 'OPEN'
-              ? 'All open customer tabs have been closed and paid. Cashiers can open new customer tabs from the Terminal POS.'
+              ? (isAdmin
+                  ? 'All customer tabs across all counters are currently settled and paid.'
+                  : 'You have no open customer tabs. Open tabs from your POS terminal will appear here.')
               : 'No tabs in this view.'}
           </p>
         </div>
@@ -358,6 +435,21 @@ export function SavedTabsView() {
                       : 'bg-slate-950/60 border-slate-800/60 opacity-80'
                   }`}
                 >
+                  {/* PROMINENT CASHIER INDICATION */}
+                  <div className="flex items-center justify-between text-xs px-2.5 py-1.5 rounded-xl bg-slate-950/90 border border-slate-800/80">
+                    <div className="flex items-center gap-1.5">
+                      <User className="w-3.5 h-3.5 text-indigo-400" />
+                      <span className="text-slate-400">Cashier Counter:</span>
+                      <strong className="text-white font-semibold">{tab.cashierName}</strong>
+                      {tab.cashierId === user?.id && (
+                        <span className="text-[9px] font-bold uppercase px-1.5 py-0.2 bg-emerald-500/20 text-emerald-300 rounded border border-emerald-500/30">
+                          You
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[10px] text-slate-500 font-mono">#{tab.cashierId.slice(-4)}</span>
+                  </div>
+
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <div className="flex items-center gap-2">
@@ -408,7 +500,7 @@ export function SavedTabsView() {
                   </div>
 
                   <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
-                    <span>Cashier: <strong className="text-slate-200">{tab.cashierName}</strong></span>
+                    <span>Opened: {formatLagosDateTime(tab.createdAt)}</span>
                     {tab.phoneNumber && <span>📞 {tab.phoneNumber}</span>}
                   </div>
 
@@ -427,10 +519,10 @@ export function SavedTabsView() {
                         className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20 cursor-pointer"
                       >
                         <CreditCard className="w-3.5 h-3.5" />
-                        Collect Payment
+                        {isAdmin && tab.cashierId !== user?.id ? 'Checkout for Cashier' : 'Collect Payment'}
                       </button>
 
-                      {isAdmin && (
+                      {(isAdmin || tab.cashierId === user?.id) && (
                         <button
                           type="button"
                           onClick={() => setSelectedTabForDelete(tab)}
@@ -449,14 +541,15 @@ export function SavedTabsView() {
 
           {/* Desktop Table View */}
           <div className="hidden sm:block bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
-            <table className="w-full text-left text-xs min-w-[700px]">
+            <table className="w-full text-left text-xs min-w-[760px]">
               <thead>
                 <tr className="bg-slate-950/70 border-b border-slate-800 text-slate-400">
                   <th className="py-3.5 px-4 font-semibold">Tab #</th>
                   <th className="py-3.5 px-4 font-semibold">Customer & Station</th>
+                  {/* PROMINENT COLUMN INDICATING CASHIER */}
+                  <th className="py-3.5 px-4 font-semibold">Opened By (Cashier Counter)</th>
                   <th className="py-3.5 px-4 font-semibold">Games Breakdown</th>
-                  <th className="py-3.5 px-4 font-semibold">Opened</th>
-                  <th className="py-3.5 px-4 font-semibold">Cashier</th>
+                  <th className="py-3.5 px-4 font-semibold">Session Time</th>
                   <th className="py-3.5 px-4 font-semibold text-right">Total Unpaid</th>
                   <th className="py-3.5 px-4 font-semibold text-right">Actions</th>
                 </tr>
@@ -500,6 +593,26 @@ export function SavedTabsView() {
                         )}
                       </td>
 
+                      {/* Cashier Ownership Indicator */}
+                      <td className="py-3 px-4 whitespace-nowrap">
+                        <div className="flex items-center gap-2">
+                          <div className="w-7 h-7 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 font-bold flex items-center justify-center text-[11px] shrink-0">
+                            {tab.cashierName.slice(0, 2).toUpperCase()}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold text-white text-xs">{tab.cashierName}</span>
+                              {tab.cashierId === user?.id && (
+                                <span className="text-[9px] font-bold uppercase px-1 py-0.2 bg-emerald-500/20 text-emerald-300 rounded border border-emerald-500/30">
+                                  You
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[10px] text-slate-400 font-mono">Counter #{tab.cashierId.slice(-4)}</span>
+                          </div>
+                        </div>
+                      </td>
+
                       <td className="py-3 px-4 max-w-xs">
                         <div className="space-y-0.5">
                           {tab.items?.map((it, idx) => (
@@ -524,10 +637,6 @@ export function SavedTabsView() {
                         </div>
                       </td>
 
-                      <td className="py-3 px-4 whitespace-nowrap text-slate-300">
-                        {tab.cashierName}
-                      </td>
-
                       <td className="py-3 px-4 text-right whitespace-nowrap font-mono font-bold text-emerald-400 text-sm">
                         {formatNaira(tab.totalAmountKobo)}
                       </td>
@@ -545,13 +654,13 @@ export function SavedTabsView() {
                                 setError(null);
                               }}
                               className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition cursor-pointer shadow-sm shadow-emerald-600/20"
-                              title="Collect Payment and Close Tab"
+                              title={isAdmin && tab.cashierId !== user?.id ? `Collect Payment on behalf of ${tab.cashierName}` : "Collect Payment and Close Tab"}
                             >
                               <CreditCard className="w-3.5 h-3.5" />
-                              Checkout Tab
+                              {isAdmin && tab.cashierId !== user?.id ? 'Checkout' : 'Settle Tab'}
                             </button>
 
-                            {isAdmin && (
+                            {(isAdmin || tab.cashierId === user?.id) && (
                               <button
                                 type="button"
                                 onClick={() => setSelectedTabForDelete(tab)}
@@ -607,6 +716,19 @@ export function SavedTabsView() {
                   {selectedTabForCheckout.customerName} {selectedTabForCheckout.stationOrNote ? `· ${selectedTabForCheckout.stationOrNote}` : ''}
                 </p>
               </div>
+            </div>
+
+            {/* Cashier Ownership Notice in Checkout */}
+            <div className="p-3 bg-indigo-950/40 border border-indigo-900/60 rounded-xl text-xs space-y-1 mb-4">
+              <div className="text-slate-300 flex items-center justify-between">
+                <span>Opened by Cashier: <strong className="text-white">{selectedTabForCheckout.cashierName}</strong></span>
+                <span className="text-[10px] text-indigo-300 font-mono">Counter #{selectedTabForCheckout.cashierId.slice(-4)}</span>
+              </div>
+              {isAdmin && selectedTabForCheckout.cashierId !== user?.id && (
+                <p className="text-[11px] text-amber-300/90 font-medium pt-1 border-t border-indigo-900/50">
+                  👑 Admin settlement: You are settling this tab on behalf of {selectedTabForCheckout.cashierName}. The sale will be recorded and credited to their shift register.
+                </p>
+              )}
             </div>
 
             {/* Bill Summary */}
@@ -773,7 +895,7 @@ export function SavedTabsView() {
               </div>
               <div>
                 <h3 className="text-base font-bold text-white">Cancel Stale Tab #{selectedTabForDelete.tabNumber}?</h3>
-                <p className="text-xs text-slate-400">Customer: {selectedTabForDelete.customerName}</p>
+                <p className="text-xs text-slate-400">Customer: {selectedTabForDelete.customerName} · Opened by {selectedTabForDelete.cashierName}</p>
               </div>
             </div>
 
@@ -824,6 +946,10 @@ export function SavedTabsView() {
               <div className="flex justify-between">
                 <span className="text-slate-400 print:text-black">Customer:</span>
                 <span className="font-bold text-white print:text-black">{completedTxn.customerName || 'Guest'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400 print:text-black">Cashier Counter:</span>
+                <span className="text-indigo-300 font-bold print:text-black">{completedTxn.cashierName}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400 print:text-black">Date & Time:</span>

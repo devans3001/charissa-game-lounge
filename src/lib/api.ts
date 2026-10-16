@@ -210,11 +210,12 @@ export const api = {
   },
 
   tabs: {
-    list: (params: { status?: string; myTabs?: boolean; search?: string } = {}) => {
+    list: (params: { status?: string; myTabs?: boolean; search?: string; cashierId?: string } = {}) => {
       const query = new URLSearchParams();
       if (params.status) query.append('status', params.status);
       if (params.myTabs) query.append('myTabs', 'true');
       if (params.search) query.append('search', params.search);
+      if (params.cashierId) query.append('cashierId', params.cashierId);
       return request<{ tabs: CustomerTab[] }>(`/api/tabs?${query.toString()}`);
     },
     create: (data: {

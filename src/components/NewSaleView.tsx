@@ -660,13 +660,22 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-sm font-bold text-white">Active Customer Tabs / Open Entries</h2>
+                <h2 className="text-sm font-bold text-white">
+                  {user?.role === 'ADMIN' ? 'All Active Customer Tabs' : 'My Active Customer Tabs'}
+                </h2>
                 <span className="px-2 py-0.5 rounded-full text-[11px] font-bold font-mono bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
                   {activeTabs.length} active {activeTabs.length === 1 ? 'customer' : 'customers'}
                 </span>
+                {user?.role !== 'ADMIN' && (
+                  <span className="text-[10px] text-slate-400 font-medium hidden sm:inline">
+                    (Your counter only)
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-400">
-                Hold multiple customers at once · Select games, save tabs, and collect payment when they are ready
+                {user?.role === 'ADMIN'
+                  ? 'Active player sessions across all cashier counters · Select any tab to checkout or manage'
+                  : 'Your active customer sessions · Select games, save tab, and collect payment when they exit'}
               </p>
             </div>
           </div>
@@ -751,6 +760,11 @@ export function NewSaleView({ onTransactionCreated }: NewSaleViewProps) {
                       {tab.stationOrNote && (
                         <span className="text-[10px] text-slate-400 font-mono">
                           ({tab.stationOrNote})
+                        </span>
+                      )}
+                      {user?.role === 'ADMIN' && (
+                        <span className="text-[9px] text-indigo-300 font-semibold px-1.5 py-0.5 bg-indigo-500/20 border border-indigo-500/30 rounded whitespace-nowrap">
+                          👤 {tab.cashierName}
                         </span>
                       )}
                     </div>
