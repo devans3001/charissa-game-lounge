@@ -194,6 +194,60 @@ function snapshotOf(db: DbSchema): DbSnapshot {
   return snap as DbSnapshot;
 }
 
+// Idempotent seed guard: live Firestore is already initialized, so the
+// first-boot seed never re-runs. Ensure the owner accounts always exist.
+async function ensureSeedUsers(users: (User & { passwordHash: string })[]): Promise<boolean> {
+  let changed = false;
+  const now = new Date().toISOString();
+  const hasAdmin = users.some(u => u.id === 'usr_admin_master' || u.username === 'admin');
+  if (!hasAdmin) {
+    const salt = bcrypt.genSaltSync(10);
+    users.unshift({
+      id: 'usr_admin_master',
+      username: 'admin',
+      name: 'Super Admin (Manager)',
+      role: 'ADMIN',
+      isActive: true,
+      mustChangePassword: false,
+      createdBy: null,
+      createdAt: now,
+      lastLoginAt: now,
+      passwordHash: bcrypt.hashSync('AdminPass123!', salt),
+    } as User & { passwordHash: string });
+    changed = true;
+  }
+  const hasDev = users.some(u => u.id === 'usr_dev_owner' || u.username === 'devans');
+  if (!hasDev) {
+    const salt = bcrypt.genSaltSync(10);
+    users.unshift({
+      id: 'usr_dev_owner',
+      username: 'devans',
+      name: 'Devans',
+      role: 'DEVELOPER',
+      phoneNumber: '08146677355',
+      isActive: true,
+      mustChangePassword: true,
+      createdBy: null,
+      createdAt: now,
+      passwordHash: bcrypt.hashSync('08146677355', salt),
+    } as User & { passwordHash: string });
+    changed = true;
+  }
+  if (changed) {
+    try {
+      const fsDb = getFirestore();
+      for (const u of users) {
+        if (u.id === 'usr_admin_master' || u.id === 'usr_dev_owner') {
+          await setDoc(doc(fsDb, 'users', u.id), cleanDoc(u), { merge: true });
+        }
+      }
+    } catch (err: any) {
+      console.error('[Firestore] ensureSeedUsers write failed:', err?.message || err);
+    }
+  }
+  return changed;
+}
+
 // Defensive normalization: guarantee every collection exists on the object
 function normalizeDb<T extends Partial<DbSchema>>(db: T): DbSchema {
   db.users = db.users || [];
@@ -289,6 +343,7 @@ export async function readDb(): Promise<DbSchema> {
     : null;
 
   normalizeDb(db);
+  await ensureSeedUsers(db.users);
   loadSnapshots.set(db, snapshotOf(db));
   return db;
 }
@@ -539,6 +594,7 @@ function createInitialDb(): DbSchema {
 
   const salt = bcrypt.genSaltSync(10);
   const adminHash = bcrypt.hashSync('AdminPass123!', salt);
+  const devHash = bcrypt.hashSync('08146677355', salt);
 
   const users: (User & { passwordHash: string })[] = [
     {
@@ -552,6 +608,18 @@ function createInitialDb(): DbSchema {
       createdAt: now.toISOString(),
       lastLoginAt: now.toISOString(),
       passwordHash: adminHash,
+    },
+    {
+      id: 'usr_dev_owner',
+      username: 'devans',
+      name: 'Devans',
+      role: 'DEVELOPER',
+      phoneNumber: '08146677355',
+      isActive: true,
+      mustChangePassword: true,
+      createdBy: null,
+      createdAt: now.toISOString(),
+      passwordHash: devHash,
     },
   ];
 

@@ -62,6 +62,20 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   return res.json() as Promise<T>;
 }
 
+export interface CoinBalanceResponse {
+  balances: CashierCoinBalance[];
+  activePool: {
+    totalAllocated: number;
+    totalSold: number;
+    totalVoidedLost: number;
+    totalCompensated: number;
+    remainingCoins: number;
+    activeCount: number;
+  };
+  startDate: string;
+  endDate: string;
+}
+
 export const api = {
   auth: {
     login: (username: string, password: string) =>
@@ -419,11 +433,7 @@ export const api = {
           method: 'POST',
           body: JSON.stringify(data),
         }),
-    balances: {
-      get: () =>
-        request<{ balances: CashierCoinBalance[] }>('/api/coin-balances'),
-    },
-    close: (id: string, data: { actualRemainingCoins: number; notes?: string }) =>
+      close: (id: string, data: { actualRemainingCoins: number; notes?: string }) =>
         request<{ allocation: CoinAllocation; expectedRemainingCoins: number; discrepancyCoins: number }>(
           `/api/coin-allocations/${id}/close`,
           {
@@ -437,7 +447,7 @@ export const api = {
       Object.entries(params).forEach(([k, v]) => {
         if (v !== undefined && v !== '') query.append(k, String(v));
       });
-      return request<{ balances: CashierCoinBalance[]; startDate: string; endDate: string }>(
+      return request<CoinBalanceResponse>(
         `/api/coin-balances?${query.toString()}`
       );
     },

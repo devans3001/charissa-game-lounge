@@ -3,6 +3,7 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { AuditLog } from '../types/index.ts';
 import { api } from '../lib/api.ts';
 import { queryClient, queryKeys } from '../lib/queryClient.ts';
+import { useAuth } from '../context/AuthContext.tsx';
 import { formatLagosDateTime, formatLagosDate } from '../lib/utils.ts';
 import {
   ShieldCheck,
@@ -24,6 +25,8 @@ import {
 import { GameTableSkeleton, GameInlineLoader, GameDataLoadingOverlay } from './game-ui/index.ts';
 
 export function AuditLogsView() {
+  const { user } = useAuth();
+  const isDeveloper = user?.role === 'DEVELOPER';
   const [page, setPage] = useState<number>(1);
   const [viewMode, setViewMode] = useState<'AUTO' | 'CARD' | 'TABLE'>('AUTO');
 
@@ -97,16 +100,18 @@ export function AuditLogsView() {
             </div>
           )}
 
-          {/* Delete all audit logs button */}
-          <button
-            type="button"
-            onClick={() => setShowClearConfirm(true)}
-            className="px-3 py-1.5 rounded-xl border border-rose-900/60 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer min-h-[36px]"
-            title="Permanently delete all audit log records"
-          >
-            <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-            <span className="hidden sm:inline">Clear All Logs</span>
-          </button>
+          {/* Delete all audit logs button (developer only — hidden from admins) */}
+          {isDeveloper && (
+            <button
+              type="button"
+              onClick={() => setShowClearConfirm(true)}
+              className="px-3 py-1.5 rounded-xl border border-rose-900/60 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer min-h-[36px]"
+              title="Permanently delete all audit log records"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+              <span className="hidden sm:inline">Clear All Logs</span>
+            </button>
+          )}
 
           {/* View Toggle */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-0.5 flex items-center self-start sm:self-auto">
@@ -441,8 +446,8 @@ export function AuditLogsView() {
         </div>
       )}
 
-      {/* Clear All Audit Logs Confirmation Modal */}
-      {showClearConfirm && (
+      {/* Clear All Audit Logs Confirmation Modal (developer only) */}
+      {isDeveloper && showClearConfirm && (
         <div onClick={() => setShowClearConfirm(false)} className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div onClick={e => e.stopPropagation()} className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 text-slate-100 shadow-2xl relative">
             <button

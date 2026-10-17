@@ -18,6 +18,7 @@ import {
   authenticate,
   requireAdmin,
   requireRole,
+  requireDeveloper,
   requireAdminOrDeveloper,
   requireFinancialOrAdmin,
   generateToken,
@@ -2573,7 +2574,10 @@ function countCoinsInTxn(t: Transaction): number {
 
 type Db = Awaited<ReturnType<typeof readDb>>;
 
-// Computes the active physical coin pool in the lounge counter across all open allocations
+// Computes the active physical coin pool in the lounge counter across all open allocations.
+// Coins carry forward day-to-day and never zero at midnight. Sales are
+// counted from the earliest contributing ACTIVE allocation so remaining
+// can never be overstated when an ACTIVE allocation predates a CLOSED one.
 function computeActiveCoinPool(db: Db): {
   totalAllocated: number;
   totalSold: number;
@@ -2592,12 +2596,24 @@ function computeActiveCoinPool(db: Db): {
     const latestClosed = [...closedAllocations].sort((a, b) => (b.closedAt || '').localeCompare(a.closedAt || ''))[0];
     cutoffTime = new Date(latestClosed.closedAt || latestClosed.timestamp).getTime();
   }
+  // Invariant: an ACTIVE allocation that predates the latest CLOSED one still
+  // contributes coins, so sales must be counted from the earliest ACTIVE
+  // allocation — otherwise remaining would be overstated.
+  if (activeAllocations.length > 0) {
+    const earliestActive = [...activeAllocations]
+      .map(a => new Date(a.timestamp).getTime())
+      .filter(t => Number.isFinite(t))
+      .sort((a, b) => a - b)[0];
+    if (Number.isFinite(earliestActive) && (cutoffTime === 0 || earliestActive < cutoffTime)) {
+      cutoffTime = earliestActive;
+    }
+  }
 
   let totalSold = 0;
   let totalVoidedReturned = 0;
   let totalVoidedLost = 0;
   for (const t of db.transactions) {
-    const tTime = new Date(t.timestamp || t.createdAt).getTime();
+    const tTime = new Date(t.timestamp).getTime();
     if (cutoffTime > 0 && tTime < cutoffTime) continue;
 
     const coins = countCoinsInTxn(t);
@@ -2612,7 +2628,7 @@ function computeActiveCoinPool(db: Db): {
 
   let totalCompensated = 0;
   for (const c of db.coinCompensations) {
-    const cTime = new Date(c.timestamp || c.createdAt).getTime();
+    const cTime = new Date(c.timestamp).getTime();
     if (cutoffTime > 0 && cTime < cutoffTime) continue;
     totalCompensated += c.coinsIssued;
   }
@@ -3107,7 +3123,8 @@ api.get('/audit-logs', authenticate, requireAdminOrDeveloper, async (req, res) =
   });
 });
 
-api.delete('/audit-logs/clear', authenticate, requireAdminOrDeveloper, async (req: AuthRequest, res) => {
+// Only the DEVELOPER (you) may purge audit history — never an admin.
+api.delete('/audit-logs/clear', authenticate, requireDeveloper, async (req: AuthRequest, res) => {
   const db = await readDb();
   const fsDb = getFirestore();
   const snap = await getDocs(collection(fsDb, 'auditLogs'));

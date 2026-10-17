@@ -94,6 +94,14 @@ export function requireAdmin(req: AuthRequest, res: Response, next: NextFunction
   next();
 }
 
+export function requireDeveloper(req: AuthRequest, res: Response, next: NextFunction): void {
+  if (!req.user || req.user.role !== 'DEVELOPER') {
+    res.status(403).json({ error: 'Developer access required for this action' });
+    return;
+  }
+  next();
+}
+
 export function requireAdminOrDeveloper(req: AuthRequest, res: Response, next: NextFunction): void {
   if (!req.user || (req.user.role !== 'ADMIN' && req.user.role !== 'DEVELOPER')) {
     res.status(403).json({ error: 'Admin or Developer access required for this action' });

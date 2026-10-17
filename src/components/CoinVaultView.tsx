@@ -85,9 +85,8 @@ export function CoinVaultView() {
   });
 
 
-  console.log(balancesQueryData,"balancesQuery")
   const balances = balancesQueryData?.balances ?? [];
-  console.log(balances,"balances")
+  const activePool = balancesQueryData?.activePool ?? null;
   const compensations = compQuery.data || [];
   const coinGames: Game[] = gamesQuery.data || [];
   const allocations: CoinAllocation[] = allocQuery.data || [];
@@ -314,6 +313,45 @@ export function CoinVaultView() {
         <div className="p-4 bg-emerald-950/60 border border-emerald-800 rounded-xl flex items-center gap-3 text-emerald-200 text-sm">
           <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
           <span>{successMessage}</span>
+        </div>
+      )}
+
+      {/* SHARED PHYSICAL COIN POOL — yesterday's ACTIVE coins carry forward, never zero at midnight */}
+      {!loading && activePool && (
+        <div className="p-5 bg-amber-950/30 border border-amber-900/50 rounded-2xl">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
+            <div>
+              <h3 className="text-sm font-bold text-amber-200 flex items-center gap-2">
+                <Coins className="w-4 h-4 text-amber-400" />
+                Shared Coin Pool (physical drawer)
+              </h3>
+              <p className="text-[11px] text-amber-200/60 mt-0.5">
+                All ACTIVE allocations across every day · {activePool.activeCount} open allocation(s) · any cashier can sell from this drawer
+              </p>
+            </div>
+            <div className="text-center bg-slate-950 border border-amber-900/40 rounded-xl px-5 py-2">
+              <span className="text-[10px] uppercase tracking-wider text-amber-200/60 block">Remaining in drawer</span>
+              <span className={`text-3xl font-bold font-mono ${activePool.remainingCoins <= 0 ? 'text-red-400' : 'text-amber-300'}`}>
+                {activePool.remainingCoins}
+              </span>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+            <div className="bg-slate-950/60 rounded-xl px-3 py-2 flex justify-between"><span className="text-slate-400">Allocated</span><span className="font-mono text-slate-200">{activePool.totalAllocated}</span></div>
+            <div className="bg-slate-950/60 rounded-xl px-3 py-2 flex justify-between"><span className="text-slate-400">Sold</span><span className="font-mono text-emerald-400">−{activePool.totalSold}</span></div>
+            <div className="bg-slate-950/60 rounded-xl px-3 py-2 flex justify-between"><span className="text-slate-400">Lost (voided)</span><span className="font-mono text-orange-400">−{activePool.totalVoidedLost}</span></div>
+            <div className="bg-slate-950/60 rounded-xl px-3 py-2 flex justify-between"><span className="text-slate-400">Lost coins</span><span className="font-mono text-amber-400">−{activePool.totalCompensated}</span></div>
+          </div>
+          {activePool.remainingCoins === 0 && activePool.activeCount === 0 && isAdmin && (
+            <button
+              type="button"
+              onClick={() => setShowAllocateModal(true)}
+              className="mt-3 px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-semibold flex items-center gap-2 transition cursor-pointer"
+            >
+              <PackagePlus className="w-4 h-4" />
+              No active float — allocate coins now
+            </button>
+          )}
         </div>
       )}
 
