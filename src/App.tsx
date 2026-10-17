@@ -40,21 +40,29 @@ function RootLayout() {
   return <Navigation />;
 }
 
-// ========== 2. Admin Guard: Redirect non-admin users ==========
-function AdminGuard({ children }: { children: React.ReactNode }) {
+import { UserRole } from './types/index.ts';
+
+// ========== 2. Role Guard: Protect views by authorized roles ==========
+function RoleGuard({
+  allowedRoles,
+  children,
+}: {
+  allowedRoles: UserRole[];
+  children: React.ReactNode;
+}) {
   const { user } = useAuth();
-  if (user?.role !== 'ADMIN') {
+  if (!user || !allowedRoles.includes(user.role)) {
     return <Navigate to="/" replace />;
   }
   return <>{children}</>;
 }
 
-// ========== 3. Cashier Redirect: After cashier login, redirect to newsale ==========
-function CashierRedirect() {
+// ========== 3. Role Default View: Cashier lands on POS; Admins, Developers & Accountants land on Dashboard ==========
+function RoleDefaultView() {
   const { user } = useAuth();
-  // if (user?.role === 'CASHIER') {
-  //   return <Navigate to="/newsale" replace />;
-  // }
+  if (user?.role === 'CASHIER') {
+    return <Navigate to="/newsale" replace />;
+  }
   return <DashboardView />;
 }
 
@@ -71,7 +79,6 @@ function RouteErrorBoundary() {
   );
 }
 
-
 // ========== 4. Router Configuration ==========
 const router = createBrowserRouter([
   {
@@ -81,31 +88,77 @@ const router = createBrowserRouter([
         <RootLayout />
       </AuthProvider>
     ),
-     errorElement: <RouteErrorBoundary />,
+    errorElement: <RouteErrorBoundary />,
     children: [
-      // Default route: cashier redirected to newsale, admin sees Dashboard
-      { index: true, element: <CashierRedirect /> },
+      // Default route: Cashier lands on POS, Admin/Accountant/Developer lands on Dashboard
+      { index: true, element: <RoleDefaultView /> },
 
-      { path: 'newsale', element: <NewSaleView /> },
-      { path: 'tabs', element: <SavedTabsView /> },
+      {
+        path: 'newsale',
+        element: (
+          <RoleGuard allowedRoles={['CASHIER', 'ADMIN', 'DEVELOPER']}>
+            <NewSaleView />
+          </RoleGuard>
+        ),
+      },
+      {
+        path: 'tabs',
+        element: (
+          <RoleGuard allowedRoles={['CASHIER', 'ADMIN', 'DEVELOPER']}>
+            <SavedTabsView />
+          </RoleGuard>
+        ),
+      },
       { path: 'transactions', element: <TransactionsView /> },
-      { path: 'reconciliation', element: (
-        <AdminGuard><ReconciliationView /></AdminGuard>
-      )},
-      { path: 'games', element: (
-        <AdminGuard><GameManagementView /></AdminGuard>
-      )},
-      { path: 'cashiers', element: (
-        <AdminGuard><CashierManagementView /></AdminGuard>
-      )},
+      {
+        path: 'reconciliation',
+        element: (
+          <RoleGuard allowedRoles={['ADMIN', 'ACCOUNTANT', 'DEVELOPER']}>
+            <ReconciliationView />
+          </RoleGuard>
+        ),
+      },
+      {
+        path: 'games',
+        element: (
+          <RoleGuard allowedRoles={['ADMIN', 'DEVELOPER']}>
+            <GameManagementView />
+          </RoleGuard>
+        ),
+      },
+      {
+        path: 'cashiers',
+        element: (
+          <RoleGuard allowedRoles={['ADMIN', 'DEVELOPER']}>
+            <CashierManagementView />
+          </RoleGuard>
+        ),
+      },
       { path: 'coinvault', element: <CoinVaultView /> },
-      { path: 'bank_accounts', element: (
-        <AdminGuard><BankAccountsView /></AdminGuard>
-      )},
-      { path: 'correction_requests', element: <CorrectionRequestsView /> },
-      { path: 'audit', element: (
-        <AdminGuard><AuditLogsView /></AdminGuard>
-      )},
+      {
+        path: 'bank_accounts',
+        element: (
+          <RoleGuard allowedRoles={['ADMIN', 'ACCOUNTANT', 'DEVELOPER']}>
+            <BankAccountsView />
+          </RoleGuard>
+        ),
+      },
+      {
+        path: 'correction_requests',
+        element: (
+          <RoleGuard allowedRoles={['CASHIER', 'ADMIN', 'DEVELOPER']}>
+            <CorrectionRequestsView />
+          </RoleGuard>
+        ),
+      },
+      {
+        path: 'audit',
+        element: (
+          <RoleGuard allowedRoles={['ADMIN', 'DEVELOPER']}>
+            <AuditLogsView />
+          </RoleGuard>
+        ),
+      },
     ],
   },
 ]);

@@ -34,7 +34,7 @@ import { GameCardSkeleton, GameTableSkeleton, GameInlineLoader, GameDataLoadingO
 
 export function SavedTabsView() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'ADMIN';
+  const isAdmin = user?.role === 'ADMIN' || user?.role === 'DEVELOPER';
 
   const [statusFilter, setStatusFilter] = useState<'OPEN' | 'CLOSED' | 'ALL'>('OPEN');
   const [cashierFilter, setCashierFilter] = useState<string>('ALL');

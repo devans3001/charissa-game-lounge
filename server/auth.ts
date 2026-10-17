@@ -74,9 +74,37 @@ export async function authenticate(req: AuthRequest, res: Response, next: NextFu
   next();
 }
 
+export function requireRole(...allowedRoles: UserRole[]) {
+  return (req: AuthRequest, res: Response, next: NextFunction): void => {
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+      res.status(403).json({
+        error: `Access denied. Authorized roles: ${allowedRoles.join(', ')} (Your role: ${req.user?.role || 'None'})`,
+      });
+      return;
+    }
+    next();
+  };
+}
+
 export function requireAdmin(req: AuthRequest, res: Response, next: NextFunction): void {
   if (!req.user || req.user.role !== 'ADMIN') {
     res.status(403).json({ error: 'Administrative privileges required for this action' });
+    return;
+  }
+  next();
+}
+
+export function requireAdminOrDeveloper(req: AuthRequest, res: Response, next: NextFunction): void {
+  if (!req.user || (req.user.role !== 'ADMIN' && req.user.role !== 'DEVELOPER')) {
+    res.status(403).json({ error: 'Admin or Developer access required for this action' });
+    return;
+  }
+  next();
+}
+
+export function requireFinancialOrAdmin(req: AuthRequest, res: Response, next: NextFunction): void {
+  if (!req.user || (req.user.role !== 'ADMIN' && req.user.role !== 'ACCOUNTANT' && req.user.role !== 'DEVELOPER')) {
+    res.status(403).json({ error: 'Financial reporting access required for this action' });
     return;
   }
   next();

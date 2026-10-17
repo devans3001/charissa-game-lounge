@@ -17,10 +17,15 @@ import { getDocs, collection, deleteDoc, doc } from 'firebase/firestore';
 import {
   authenticate,
   requireAdmin,
+  requireRole,
+  requireAdminOrDeveloper,
+  requireFinancialOrAdmin,
   generateToken,
   AuthRequest,
 } from './auth.ts';
 import {
+  User,
+  UserRole,
   Game,
   Transaction,
   TransactionItem,
@@ -77,6 +82,33 @@ for (const method of ['get', 'post', 'put', 'delete', 'patch'] as const) {
     });
     return original(path, ...wrapped);
   };
+}
+
+// Validates and normalizes Nigerian mobile numbers (08012345678, +2348012345678, etc.)
+export function validateAndNormalizeNigerianPhone(phone: string): {
+  isValid: boolean;
+  normalized?: string;
+  error?: string;
+} {
+  if (!phone || typeof phone !== 'string') {
+    return { isValid: false, error: 'Phone number is required.' };
+  }
+  let clean = phone.trim().replace(/[\s\-\(\)\.]/g, '');
+  if (clean.startsWith('+234')) {
+    clean = '0' + clean.slice(4);
+  } else if (clean.startsWith('234') && clean.length === 13) {
+    clean = '0' + clean.slice(3);
+  }
+
+  const regex = /^0[789][01]\d{8}$/;
+  if (!regex.test(clean)) {
+    return {
+      isValid: false,
+      error: 'Please enter a valid 11-digit Nigerian mobile number starting with 070, 080, 081, 090, or 091 (e.g. 08012345678 or +234...).',
+    };
+  }
+
+  return { isValid: true, normalized: clean };
 }
 
 // ==========================================
@@ -305,7 +337,7 @@ api.get('/settings', authenticate, async (req: AuthRequest, res) => {
   res.json({ settings: db.appSettings });
 });
 
-api.put('/settings/coin-price', authenticate, requireAdmin, async (req: AuthRequest, res) => {
+api.put('/settings/coin-price', authenticate, requireAdminOrDeveloper, async (req: AuthRequest, res) => {
   const { coinPriceKobo } = req.body;
   const price = parseInt(coinPriceKobo, 10);
   if (!Number.isFinite(price) || price <= 0) {
@@ -361,7 +393,7 @@ api.put('/settings/coin-price', authenticate, requireAdmin, async (req: AuthRequ
 
 api.get('/games', authenticate, async (req: AuthRequest, res) => {
   const db = await readDb();
-  const showAll = req.query.all === 'true' && req.user?.role === 'ADMIN';
+  const showAll = req.query.all === 'true' && (req.user?.role === 'ADMIN' || req.user?.role === 'DEVELOPER');
 
   const games = showAll
     ? db.games
@@ -370,7 +402,7 @@ api.get('/games', authenticate, async (req: AuthRequest, res) => {
   res.json({ games });
 });
 
-api.post('/games', authenticate, requireAdmin, async (req: AuthRequest, res) => {
+api.post('/games', authenticate, requireAdminOrDeveloper, async (req: AuthRequest, res) => {
   const {
     name,
     category,
@@ -452,7 +484,7 @@ api.post('/games', authenticate, requireAdmin, async (req: AuthRequest, res) => 
   res.status(201).json({ game: newGame });
 });
 
-api.put('/games/:id', authenticate, requireAdmin, async (req: AuthRequest, res) => {
+api.put('/games/:id', authenticate, requireAdminOrDeveloper, async (req: AuthRequest, res) => {
   const { id } = req.params;
   const db = await readDb();
   const gameIndex = db.games.findIndex(g => g.id === id);
@@ -525,7 +557,7 @@ api.put('/games/:id', authenticate, requireAdmin, async (req: AuthRequest, res) 
   res.json({ game: currentGame });
 });
 
-api.patch('/games/:id/status', authenticate, requireAdmin, async (req: AuthRequest, res) => {
+api.patch('/games/:id/status', authenticate, requireAdminOrDeveloper, async (req: AuthRequest, res) => {
   const { id } = req.params;
   const { isActive } = req.body;
 
@@ -958,8 +990,8 @@ api.get('/transactions/:id', authenticate, async (req: AuthRequest, res) => {
   res.json({ transaction: txn });
 });
 
-// Admin-only Void transaction
-api.post('/transactions/:id/void', authenticate, requireAdmin, async (req: AuthRequest, res) => {
+// Admin / Developer Void transaction
+api.post('/transactions/:id/void', authenticate, requireAdminOrDeveloper, async (req: AuthRequest, res) => {
   const { reason, coinsReturned } = req.body;
   if (!reason || reason.trim().length < 4) {
     res.status(400).json({ error: 'A specific explanation/reason is required to void a financial transaction.' });
@@ -1017,8 +1049,8 @@ api.post('/transactions/:id/void', authenticate, requireAdmin, async (req: AuthR
   res.json({ transaction: txn });
 });
 
-// Admin-only Correct transaction
-api.post('/transactions/:id/correct', authenticate, requireAdmin, async (req: AuthRequest, res) => {
+// Admin / Developer Correct transaction
+api.post('/transactions/:id/correct', authenticate, requireAdminOrDeveloper, async (req: AuthRequest, res) => {
   const { reason, paymentMethod, paymentReference } = req.body;
 
   if (!reason || reason.trim().length < 4) {
@@ -1151,7 +1183,7 @@ api.get('/correction-requests', authenticate, async (req: AuthRequest, res) => {
   res.json({ requests: list });
 });
 
-api.post('/correction-requests/:id/review', authenticate, requireAdmin, async (req: AuthRequest, res) => {
+api.post('/correction-requests/:id/review', authenticate, requireAdminOrDeveloper, async (req: AuthRequest, res) => {
   const { action, adminNotes } = req.body; // action: 'APPROVE' | 'REJECT'
 
   if (action !== 'APPROVE' && action !== 'REJECT') {
@@ -1599,12 +1631,12 @@ api.post('/tabs/:id/checkout', authenticate, async (req: AuthRequest, res) => {
   res.json({ transaction: newTxn, tab });
 });
 
-api.get('/reconciliation', authenticate, requireAdmin, async (req, res) => {
+api.get('/reconciliation', authenticate, requireFinancialOrAdmin, async (req, res) => {
   const db = await readDb();
   res.json({ reconciliations: db.reconciliations });
 });
 
-api.get('/reconciliation/day/:date', authenticate, requireAdmin, async (req, res) => {
+api.get('/reconciliation/day/:date', authenticate, requireFinancialOrAdmin, async (req, res) => {
   const { date } = req.params; // YYYY-MM-DD
   const db = await readDb();
 
@@ -1676,7 +1708,7 @@ api.get('/reconciliation/day/:date', authenticate, requireAdmin, async (req, res
   }
 });
 
-api.post('/reconciliation/day/:date', authenticate, requireAdmin, async (req: AuthRequest, res) => {
+api.post('/reconciliation/day/:date', authenticate, requireFinancialOrAdmin, async (req: AuthRequest, res) => {
   const { date } = req.params;
   const {
     actualCashKobo = 0,
@@ -1811,7 +1843,7 @@ api.post('/reconciliation/day/:date', authenticate, requireAdmin, async (req: Au
   res.json({ reconciliation: rec });
 });
 
-api.post('/reconciliation/day/:date/reopen', authenticate, requireAdmin, async (req: AuthRequest, res) => {
+api.post('/reconciliation/day/:date/reopen', authenticate, requireFinancialOrAdmin, async (req: AuthRequest, res) => {
   const { date } = req.params;
   const { reason } = req.body;
 
@@ -1983,15 +2015,17 @@ api.get('/dashboard/stats', authenticate, async (req: AuthRequest, res) => {
 
   const recentTransactions = txns.slice(0, 10);
 
-  // Coin float statistics for the selected period (all cashiers or own)
+  // Coin float statistics for the selected period
+  const activePool = computeActiveCoinPool(db);
+
   const periodAllocations = db.coinAllocations.filter(
-    a => a.businessDate >= startDate && a.businessDate <= endDate && (req.user!.role === 'ADMIN' || a.cashierId === req.user!.id)
+    a => a.businessDate >= startDate && a.businessDate <= endDate && (req.user!.role !== 'CASHIER' || a.cashierId === req.user!.id)
   );
   const periodCompensations = db.coinCompensations.filter(
-    c => c.businessDate >= startDate && c.businessDate <= endDate && (req.user!.role === 'ADMIN' || c.cashierId === req.user!.id)
+    c => c.businessDate >= startDate && c.businessDate <= endDate && (req.user!.role !== 'CASHIER' || c.cashierId === req.user!.id)
   );
   const periodAllTxns = db.transactions.filter(
-    t => t.businessDate >= startDate && t.businessDate <= endDate && (req.user!.role === 'ADMIN' || t.cashierId === req.user!.id)
+    t => t.businessDate >= startDate && t.businessDate <= endDate && (req.user!.role !== 'CASHIER' || t.cashierId === req.user!.id)
   );
 
   let totalAllocatedCoins = periodAllocations.reduce((s, a) => s + a.initialCoins, 0);
@@ -2012,6 +2046,17 @@ api.get('/dashboard/stats', authenticate, async (req: AuthRequest, res) => {
   }
   const totalCompensatedCoins = periodCompensations.reduce((s, c) => s + c.coinsIssued, 0);
 
+  // Coins in the lounge drawer are kept in one place physically and carry over day to day.
+  // If no new allocations were made on the selected date (e.g. today after yesterday's allocation),
+  // carry forward the active pool so the dashboard displays real physical accountability.
+  const displayAllocated = totalAllocatedCoins > 0 ? totalAllocatedCoins : activePool.totalAllocated;
+  const displaySold = totalAllocatedCoins > 0 ? totalSoldCoins : activePool.totalSold;
+  const displayVoidedLost = totalAllocatedCoins > 0 ? totalVoidedLostCoins : activePool.totalVoidedLost;
+  const displayCompensated = totalAllocatedCoins > 0 ? totalCompensatedCoins : activePool.totalCompensated;
+  const displayRemaining = totalAllocatedCoins > 0
+    ? totalAllocatedCoins - totalSoldCoins - totalVoidedLostCoins - totalCompensatedCoins
+    : activePool.remainingCoins;
+
   // Check reconciliation status for today
   const todayRec = db.reconciliations.find(r => r.businessDate === todayLagos);
 
@@ -2029,13 +2074,13 @@ api.get('/dashboard/stats', authenticate, async (req: AuthRequest, res) => {
     cashierBreakdown,
     recentTransactions,
     coinStats: {
-      totalAllocated: totalAllocatedCoins,
-      totalSold: totalSoldCoins,
+      totalAllocated: displayAllocated,
+      totalSold: displaySold,
       totalVoided: totalVoidedCoins,
       totalVoidedReturned: totalVoidedReturnedCoins,
-      totalVoidedLost: totalVoidedLostCoins,
-      totalCompensated: totalCompensatedCoins,
-      totalRemaining: totalAllocatedCoins - totalSoldCoins - totalVoidedLostCoins - totalCompensatedCoins,
+      totalVoidedLost: displayVoidedLost,
+      totalCompensated: displayCompensated,
+      totalRemaining: displayRemaining,
     },
     reconciliationStatus: todayRec
       ? {
@@ -2050,10 +2095,50 @@ api.get('/dashboard/stats', authenticate, async (req: AuthRequest, res) => {
 });
 
 // ==========================================
-// 6. CASHIERS ACCOUNT MANAGEMENT
+// 6. STAFF & USER ACCOUNT MANAGEMENT
+// (Cashiers, Admins, Accountants, Developers)
 // ==========================================
 
-api.get('/cashiers', authenticate, requireAdmin, async (req, res) => {
+// Get list of staff users (with sales stats for cashiers/staff)
+api.get('/users', authenticate, requireAdminOrDeveloper, async (req, res) => {
+  const db = await readDb();
+  const todayLagos = getLagosDateString(new Date());
+  const roleFilter = req.query.role as string;
+
+  let filtered = db.users;
+  if (roleFilter && roleFilter !== 'ALL') {
+    filtered = filtered.filter(u => u.role === roleFilter);
+  }
+
+  const users = filtered.map(u => {
+    const allTxns = db.transactions.filter(t => t.cashierId === u.id && t.status !== 'VOIDED');
+    const todayTxns = allTxns.filter(t => t.businessDate === todayLagos);
+
+    const totalSalesKobo = allTxns.reduce((s, t) => s + t.totalAmountKobo, 0);
+    const todaySalesKobo = todayTxns.reduce((s, t) => s + t.totalAmountKobo, 0);
+
+    return {
+      id: u.id,
+      username: u.username,
+      name: u.name,
+      role: u.role,
+      isActive: u.isActive,
+      phoneNumber: u.phoneNumber,
+      mustChangePassword: Boolean(u.mustChangePassword),
+      createdAt: u.createdAt,
+      lastLoginAt: u.lastLoginAt,
+      totalTransactions: allTxns.length,
+      totalSalesKobo,
+      todayTransactions: todayTxns.length,
+      todaySalesKobo,
+    };
+  });
+
+  res.json({ users, cashiers: users });
+});
+
+// Backward compatibility alias for cashiers
+api.get('/cashiers', authenticate, requireAdminOrDeveloper, async (req, res) => {
   const db = await readDb();
   const todayLagos = getLagosDateString(new Date());
 
@@ -2083,54 +2168,61 @@ api.get('/cashiers', authenticate, requireAdmin, async (req, res) => {
       };
     });
 
-  res.json({ cashiers });
+  res.json({ cashiers, users: cashiers });
 });
 
-api.post('/cashiers', authenticate, requireAdmin, async (req: AuthRequest, res) => {
-  const { name, phoneNumber } = req.body;
+// Create new staff account (Cashier, Admin, Accountant, Developer)
+api.post('/users', authenticate, requireAdminOrDeveloper, async (req: AuthRequest, res) => {
+  const { name, phoneNumber, role } = req.body;
 
   if (!name || !name.trim() || !phoneNumber || !phoneNumber.trim()) {
     res.status(400).json({ error: 'Staff full name and phone number are required.' });
     return;
   }
 
-  const cleanName = name.trim();
-  const cleanPhone = phoneNumber.trim().replace(/\s+/g, '');
+  const validRoles: UserRole[] = ['CASHIER', 'ADMIN', 'ACCOUNTANT', 'DEVELOPER'];
+  const userRole: UserRole = validRoles.includes(role) ? role : 'CASHIER';
 
-  if (cleanPhone.length < 8) {
-    res.status(400).json({ error: 'Please enter a valid phone number (at least 8 digits).' });
+  // Strict Nigerian phone number validation
+  const phoneValidation = validateAndNormalizeNigerianPhone(phoneNumber);
+  if (!phoneValidation.isValid || !phoneValidation.normalized) {
+    res.status(400).json({
+      error: phoneValidation.error || 'Please enter a valid 11-digit Nigerian mobile number (e.g. 08012345678, 070..., 090..., 091...).',
+    });
     return;
   }
+  const cleanPhone = phoneValidation.normalized;
+  const cleanName = name.trim();
 
   const db = await readDb();
   const exists = db.users.some(
     u => u.username.toLowerCase() === cleanPhone.toLowerCase() ||
-         (u.phoneNumber && u.phoneNumber.replace(/\s+/g, '') === cleanPhone)
+         (u.phoneNumber && u.phoneNumber.replace(/[^0-9]/g, '') === cleanPhone)
   );
 
   if (exists) {
-    res.status(400).json({ error: 'A cashier account with this phone number already exists.' });
+    res.status(400).json({ error: `An account with this phone number (${cleanPhone}) already exists.` });
     return;
   }
 
-  // The default password upon creation is strictly their phone number
+  // The default password upon creation is strictly their phone number.
+  // Any new account is flagged with mustChangePassword = true.
   const salt = bcrypt.genSaltSync(10);
   const passwordHash = bcrypt.hashSync(cleanPhone, salt);
   const now = new Date().toISOString();
-  const cashierId = `usr_cashier_${Date.now()}`;
+  const userId = `usr_${userRole.toLowerCase()}_${Date.now()}`;
 
-  // Friendly username from cashier's first name, or fallback to phone
   let candidateUsername = cleanName.toLowerCase().split(/\s+/)[0].replace(/[^a-z0-9]/g, '');
   if (!candidateUsername || candidateUsername.length < 2 || candidateUsername === 'admin' || db.users.some(u => u.username.toLowerCase() === candidateUsername)) {
     candidateUsername = cleanPhone;
   }
 
-  const newCashier = {
-    id: cashierId,
+  const newUser: User & { passwordHash: string } = {
+    id: userId,
     username: candidateUsername,
     name: cleanName,
     phoneNumber: cleanPhone,
-    role: 'CASHIER' as const,
+    role: userRole,
     isActive: true,
     mustChangePassword: true,
     createdBy: req.user!.id,
@@ -2138,41 +2230,133 @@ api.post('/cashiers', authenticate, requireAdmin, async (req: AuthRequest, res) 
     passwordHash,
   };
 
-  db.users.push(newCashier);
+  db.users.push(newUser);
   await saveDb(db);
 
   await addAuditLog(
     { id: req.user!.id, name: req.user!.name, role: req.user!.role },
-    'CASHIER_CREATED',
+    userRole === 'CASHIER' ? 'CASHIER_CREATED' : 'USER_CREATED',
     'USER',
-    newCashier.id,
+    newUser.id,
     {
       newValues: {
-        username: newCashier.username,
-        name: newCashier.name,
-        phoneNumber: newCashier.phoneNumber,
-        role: newCashier.role,
+        username: newUser.username,
+        name: newUser.name,
+        phoneNumber: newUser.phoneNumber,
+        role: newUser.role,
         mustChangePassword: true,
       },
-      reason: 'Cashier created with phone number as default password and mustChangePassword prompt',
+      reason: `${userRole} account created with Nigerian phone number as initial default password and mandatory change password prompt`,
     }
   );
 
-  const safeCashier = {
-    id: newCashier.id,
-    username: newCashier.username,
-    name: newCashier.name,
-    phoneNumber: newCashier.phoneNumber,
-    role: newCashier.role,
-    isActive: newCashier.isActive,
+  const safeUser = {
+    id: newUser.id,
+    username: newUser.username,
+    name: newUser.name,
+    phoneNumber: newUser.phoneNumber,
+    role: newUser.role,
+    isActive: newUser.isActive,
     mustChangePassword: true,
-    createdAt: newCashier.createdAt,
+    createdAt: newUser.createdAt,
   };
 
-  res.status(201).json({ cashier: safeCashier });
+  res.status(201).json({ user: safeUser, cashier: safeUser });
 });
 
-api.patch('/cashiers/:id/status', authenticate, requireAdmin, async (req: AuthRequest, res) => {
+// Backward compatibility alias for cashier creation
+api.post('/cashiers', authenticate, requireAdminOrDeveloper, async (req: AuthRequest, res) => {
+  req.body.role = req.body.role || 'CASHIER';
+  const { name, phoneNumber, role } = req.body;
+
+  if (!name || !name.trim() || !phoneNumber || !phoneNumber.trim()) {
+    res.status(400).json({ error: 'Staff full name and phone number are required.' });
+    return;
+  }
+
+  const validRoles: UserRole[] = ['CASHIER', 'ADMIN', 'ACCOUNTANT', 'DEVELOPER'];
+  const userRole: UserRole = validRoles.includes(role) ? role : 'CASHIER';
+
+  const phoneValidation = validateAndNormalizeNigerianPhone(phoneNumber);
+  if (!phoneValidation.isValid || !phoneValidation.normalized) {
+    res.status(400).json({
+      error: phoneValidation.error || 'Please enter a valid 11-digit Nigerian mobile number (e.g. 08012345678, 070..., 090..., 091...).',
+    });
+    return;
+  }
+  const cleanPhone = phoneValidation.normalized;
+  const cleanName = name.trim();
+
+  const db = await readDb();
+  const exists = db.users.some(
+    u => u.username.toLowerCase() === cleanPhone.toLowerCase() ||
+         (u.phoneNumber && u.phoneNumber.replace(/[^0-9]/g, '') === cleanPhone)
+  );
+
+  if (exists) {
+    res.status(400).json({ error: `An account with this phone number (${cleanPhone}) already exists.` });
+    return;
+  }
+
+  const salt = bcrypt.genSaltSync(10);
+  const passwordHash = bcrypt.hashSync(cleanPhone, salt);
+  const now = new Date().toISOString();
+  const userId = `usr_${userRole.toLowerCase()}_${Date.now()}`;
+
+  let candidateUsername = cleanName.toLowerCase().split(/\s+/)[0].replace(/[^a-z0-9]/g, '');
+  if (!candidateUsername || candidateUsername.length < 2 || candidateUsername === 'admin' || db.users.some(u => u.username.toLowerCase() === candidateUsername)) {
+    candidateUsername = cleanPhone;
+  }
+
+  const newUser: User & { passwordHash: string } = {
+    id: userId,
+    username: candidateUsername,
+    name: cleanName,
+    phoneNumber: cleanPhone,
+    role: userRole,
+    isActive: true,
+    mustChangePassword: true,
+    createdBy: req.user!.id,
+    createdAt: now,
+    passwordHash,
+  };
+
+  db.users.push(newUser);
+  await saveDb(db);
+
+  await addAuditLog(
+    { id: req.user!.id, name: req.user!.name, role: req.user!.role },
+    userRole === 'CASHIER' ? 'CASHIER_CREATED' : 'USER_CREATED',
+    'USER',
+    newUser.id,
+    {
+      newValues: {
+        username: newUser.username,
+        name: newUser.name,
+        phoneNumber: newUser.phoneNumber,
+        role: newUser.role,
+        mustChangePassword: true,
+      },
+      reason: `${userRole} account created with Nigerian phone number as initial default password and mandatory change password prompt`,
+    }
+  );
+
+  const safeUser = {
+    id: newUser.id,
+    username: newUser.username,
+    name: newUser.name,
+    phoneNumber: newUser.phoneNumber,
+    role: newUser.role,
+    isActive: newUser.isActive,
+    mustChangePassword: true,
+    createdAt: newUser.createdAt,
+  };
+
+  res.status(201).json({ user: safeUser, cashier: safeUser });
+});
+
+// Toggle staff active/inactive status
+api.patch('/users/:id/status', authenticate, requireAdminOrDeveloper, async (req: AuthRequest, res) => {
   const { id } = req.params;
   const { isActive } = req.body;
 
@@ -2181,88 +2365,196 @@ api.patch('/cashiers/:id/status', authenticate, requireAdmin, async (req: AuthRe
     return;
   }
 
-  const db = await readDb();
-  const cashier = db.users.find(u => u.id === id && u.role === 'CASHIER');
-
-  if (!cashier) {
-    res.status(404).json({ error: 'Cashier account not found' });
+  if (req.user!.id === id && !isActive) {
+    res.status(400).json({ error: 'You cannot deactivate your own account.' });
+    return;
+  }
+  if (id === 'usr_admin_master' && !isActive) {
+    res.status(400).json({ error: 'Master administrator account cannot be deactivated.' });
     return;
   }
 
-  const oldStatus = cashier.isActive;
-  cashier.isActive = isActive;
+  const db = await readDb();
+  const targetUser = db.users.find(u => u.id === id);
+
+  if (!targetUser) {
+    res.status(404).json({ error: 'User account not found' });
+    return;
+  }
+
+  const oldStatus = targetUser.isActive;
+  targetUser.isActive = isActive;
   await saveDb(db);
 
   await addAuditLog(
     { id: req.user!.id, name: req.user!.name, role: req.user!.role },
-    'CASHIER_STATUS_CHANGED',
+    targetUser.role === 'CASHIER' ? 'CASHIER_STATUS_CHANGED' : 'USER_STATUS_CHANGED',
     'USER',
-    cashier.id,
+    targetUser.id,
     {
       previousValues: { isActive: oldStatus },
-      newValues: { isActive: cashier.isActive },
-      reason: isActive ? 'Cashier account activated' : 'Cashier account deactivated',
+      newValues: { isActive: targetUser.isActive },
+      reason: isActive ? `${targetUser.role} account activated` : `${targetUser.role} account deactivated`,
     }
   );
 
   res.json({
+    user: {
+      id: targetUser.id,
+      username: targetUser.username,
+      name: targetUser.name,
+      role: targetUser.role,
+      isActive: targetUser.isActive,
+    },
     cashier: {
-      id: cashier.id,
-      username: cashier.username,
-      name: cashier.name,
-      role: cashier.role,
-      isActive: cashier.isActive,
+      id: targetUser.id,
+      username: targetUser.username,
+      name: targetUser.name,
+      role: targetUser.role,
+      isActive: targetUser.isActive,
     },
   });
 });
 
-api.post('/cashiers/:id/reset-password', authenticate, requireAdmin, async (req: AuthRequest, res) => {
+// Alias for cashier status toggle
+api.patch('/cashiers/:id/status', authenticate, requireAdminOrDeveloper, async (req: AuthRequest, res) => {
   const { id } = req.params;
-  const { newPassword } = req.body;
+  const { isActive } = req.body;
 
-  if (!newPassword || newPassword.length < 6) {
-    res.status(400).json({ error: 'New password must be at least 6 characters.' });
+  if (typeof isActive !== 'boolean') {
+    res.status(400).json({ error: 'isActive must be a boolean' });
+    return;
+  }
+
+  if (req.user!.id === id && !isActive) {
+    res.status(400).json({ error: 'You cannot deactivate your own account.' });
+    return;
+  }
+  if (id === 'usr_admin_master' && !isActive) {
+    res.status(400).json({ error: 'Master administrator account cannot be deactivated.' });
     return;
   }
 
   const db = await readDb();
-  const cashier = db.users.find(u => u.id === id && u.role === 'CASHIER');
+  const targetUser = db.users.find(u => u.id === id);
 
-  if (!cashier) {
+  if (!targetUser) {
+    res.status(404).json({ error: 'User account not found' });
+    return;
+  }
+
+  const oldStatus = targetUser.isActive;
+  targetUser.isActive = isActive;
+  await saveDb(db);
+
+  await addAuditLog(
+    { id: req.user!.id, name: req.user!.name, role: req.user!.role },
+    targetUser.role === 'CASHIER' ? 'CASHIER_STATUS_CHANGED' : 'USER_STATUS_CHANGED',
+    'USER',
+    targetUser.id,
+    {
+      previousValues: { isActive: oldStatus },
+      newValues: { isActive: targetUser.isActive },
+      reason: isActive ? `${targetUser.role} account activated` : `${targetUser.role} account deactivated`,
+    }
+  );
+
+  res.json({
+    user: {
+      id: targetUser.id,
+      username: targetUser.username,
+      name: targetUser.name,
+      role: targetUser.role,
+      isActive: targetUser.isActive,
+    },
+    cashier: {
+      id: targetUser.id,
+      username: targetUser.username,
+      name: targetUser.name,
+      role: targetUser.role,
+      isActive: targetUser.isActive,
+    },
+  });
+});
+
+// Reset staff password (resets to phone number or provided password, with mustChangePassword = true)
+api.post('/users/:id/reset-password', authenticate, requireAdminOrDeveloper, async (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { newPassword } = req.body;
+
+  const db = await readDb();
+  const targetUser = db.users.find(u => u.id === id);
+
+  if (!targetUser) {
+    res.status(404).json({ error: 'User account not found' });
+    return;
+  }
+
+  const resetTo = (newPassword && newPassword.length >= 6)
+    ? newPassword
+    : (targetUser.phoneNumber || '08012345678');
+
+  const salt = bcrypt.genSaltSync(10);
+  targetUser.passwordHash = bcrypt.hashSync(resetTo, salt);
+  targetUser.mustChangePassword = true;
+  await saveDb(db);
+
+  await addAuditLog(
+    { id: req.user!.id, name: req.user!.name, role: req.user!.role },
+    targetUser.role === 'CASHIER' ? 'CASHIER_PASSWORD_RESET' : 'USER_PASSWORD_RESET',
+    'USER',
+    targetUser.id,
+    {
+      reason: `Password reset by ${req.user!.name} (${req.user!.role}). User will be prompted to change password.`,
+    }
+  );
+
+  res.json({ message: `Password for ${targetUser.name} successfully reset.` });
+});
+
+// Alias for cashiers reset-password
+api.post('/cashiers/:id/reset-password', authenticate, requireAdminOrDeveloper, async (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { newPassword } = req.body;
+
+  const db = await readDb();
+  const targetUser = db.users.find(u => u.id === id);
+
+  if (!targetUser) {
     res.status(404).json({ error: 'Cashier account not found' });
     return;
   }
 
+  const resetTo = (newPassword && newPassword.length >= 6)
+    ? newPassword
+    : (targetUser.phoneNumber || '08012345678');
+
   const salt = bcrypt.genSaltSync(10);
-  cashier.passwordHash = bcrypt.hashSync(newPassword, salt);
+  targetUser.passwordHash = bcrypt.hashSync(resetTo, salt);
+  targetUser.mustChangePassword = true;
   await saveDb(db);
 
   await addAuditLog(
     { id: req.user!.id, name: req.user!.name, role: req.user!.role },
     'CASHIER_PASSWORD_RESET',
     'USER',
-    cashier.id,
+    targetUser.id,
     {
-      reason: `Password reset by administrator ${req.user!.name}`,
+      reason: `Password reset by ${req.user!.name} (${req.user!.role})`,
     }
   );
 
-  res.json({ message: `Password for ${cashier.name} successfully reset.` });
+  res.json({ message: `Password for ${targetUser.name} successfully reset.` });
 });
 
 // ==========================================================
 // 7. COIN VAULT (ALLOCATIONS, BALANCES, COMPENSATIONS)
 // ==========================================================
-// Accounting model per cashier:
-//   expectedRemaining = allocated - soldCoins - voidedLostCoins - compensatedCoins
-// A VOIDED sale splits in two, depending on whether the physical coins actually
-// came back into the drawer (admin answers this in the Void modal):
-//   • coinsReturnedToDrawer = true  → the sale was cancelled, the coins are
-//     physically back in the drawer, so they are CREDITED back to the float.
-//   • coinsReturnedToDrawer = false (or missing, i.e. legacy voids) → the coin
-//     already left the drawer (stuck in machine, dispensed then refunded), so
-//     it STAYS deducted. The cashier reports the incident physically or on the
-//     platform (void + fix request), and the books stay balanced.
+// Physical reality of arcade lounge tokens:
+//   • Coins are stored in ONE PLACE physically at the counter/drawer.
+//   • When the admin allocates coins, they carry forward day-to-day as an ACTIVE pool.
+//   • They NEVER zero out at midnight. They remain available until sold, lost, or closed.
+//   • Even if an allocation is handed to Cashier A, other cashiers can sell from the same pool.
 
 // Total coins physically handed out for one transaction (any status)
 function countCoinsInTxn(t: Transaction): number {
@@ -2281,8 +2573,65 @@ function countCoinsInTxn(t: Transaction): number {
 
 type Db = Awaited<ReturnType<typeof readDb>>;
 
+// Computes the active physical coin pool in the lounge counter across all open allocations
+function computeActiveCoinPool(db: Db): {
+  totalAllocated: number;
+  totalSold: number;
+  totalVoidedReturned: number;
+  totalVoidedLost: number;
+  totalCompensated: number;
+  remainingCoins: number;
+  activeAllocations: CoinAllocation[];
+} {
+  const activeAllocations = db.coinAllocations.filter(a => a.status === 'ACTIVE');
+  const totalAllocated = activeAllocations.reduce((s, a) => s + a.initialCoins, 0);
+
+  const closedAllocations = db.coinAllocations.filter(a => a.status === 'CLOSED');
+  let cutoffTime = 0;
+  if (closedAllocations.length > 0) {
+    const latestClosed = [...closedAllocations].sort((a, b) => (b.closedAt || '').localeCompare(a.closedAt || ''))[0];
+    cutoffTime = new Date(latestClosed.closedAt || latestClosed.timestamp).getTime();
+  }
+
+  let totalSold = 0;
+  let totalVoidedReturned = 0;
+  let totalVoidedLost = 0;
+  for (const t of db.transactions) {
+    const tTime = new Date(t.timestamp || t.createdAt).getTime();
+    if (cutoffTime > 0 && tTime < cutoffTime) continue;
+
+    const coins = countCoinsInTxn(t);
+    if (coins <= 0) continue;
+    if (t.status === 'VOIDED') {
+      if (t.coinsReturnedToDrawer === true) totalVoidedReturned += coins;
+      else totalVoidedLost += coins;
+    } else {
+      totalSold += coins;
+    }
+  }
+
+  let totalCompensated = 0;
+  for (const c of db.coinCompensations) {
+    const cTime = new Date(c.timestamp || c.createdAt).getTime();
+    if (cutoffTime > 0 && cTime < cutoffTime) continue;
+    totalCompensated += c.coinsIssued;
+  }
+
+  const remainingCoins = Math.max(0, totalAllocated - totalSold - totalVoidedLost - totalCompensated);
+  return {
+    totalAllocated,
+    totalSold,
+    totalVoidedReturned,
+    totalVoidedLost,
+    totalCompensated,
+    remainingCoins,
+    activeAllocations,
+  };
+}
+
 function computeCoinBalance(db: Db, cashierId: string, cashierName: string, startDate?: string, endDate?: string): CashierCoinBalance {
   const inWindow = (d: string) => (!startDate || d >= startDate) && (!endDate || d <= endDate);
+  const activePool = computeActiveCoinPool(db);
 
   const allocatedCoins = db.coinAllocations
     .filter(a => a.cashierId === cashierId && inWindow(a.businessDate))
@@ -2297,8 +2646,6 @@ function computeCoinBalance(db: Db, cashierId: string, cashierName: string, star
     const coins = countCoinsInTxn(t);
     if (coins <= 0) continue;
     if (t.status === 'VOIDED') {
-      // Coins physically handed back → credited to the float. Legacy voids have
-      // no flag and are treated as lost, preserving the previous behaviour.
       if (t.coinsReturnedToDrawer === true) voidedReturnedCoins += coins;
       else voidedLostCoins += coins;
     } else {
@@ -2310,7 +2657,6 @@ function computeCoinBalance(db: Db, cashierId: string, cashierName: string, star
     .filter(c => c.cashierId === cashierId && inWindow(c.businessDate))
     .reduce((s, c) => s + c.coinsIssued, 0);
 
-  // Most recent closed allocation in window carries the physical count snapshot
   const closedAllocs = db.coinAllocations
     .filter(a => a.cashierId === cashierId && a.status === 'CLOSED' && a.actualRemainingCoins !== undefined && inWindow(a.businessDate))
     .sort((a, b) => (b.closedAt || '').localeCompare(a.closedAt || ''));
@@ -2318,49 +2664,58 @@ function computeCoinBalance(db: Db, cashierId: string, cashierName: string, star
 
   const businessDate = endDate || startDate || getLagosDateString(new Date());
 
+  // Personal cashier expected remainder for isolated reconciliation
+  const personalExpected = allocatedCoins - soldCoins - voidedLostCoins - compensatedCoins;
+
+  // For live sales guards and drawer view: physical drawer tokens carry over from activePool.
+  // Both the allocated cashier and other cashiers sharing the counter have access to physical tokens.
+  const expectedRemainingCoins = activePool.remainingCoins > 0
+    ? activePool.remainingCoins
+    : Math.max(0, personalExpected);
+
   return {
     cashierId,
     cashierName,
     businessDate,
-    allocatedCoins,
+    allocatedCoins: allocatedCoins > 0 ? allocatedCoins : activePool.totalAllocated,
     soldCoins,
     voidedCoins: voidedReturnedCoins + voidedLostCoins,
     voidedReturnedCoins,
     voidedLostCoins,
     compensatedCoins,
-    expectedRemainingCoins: allocatedCoins - soldCoins - voidedLostCoins - compensatedCoins,
+    expectedRemainingCoins,
     actualRemainingCoins: lastClosed?.actualRemainingCoins,
     discrepancyCoins: lastClosed?.discrepancyCoins,
     notes: lastClosed?.closeNotes,
   };
 }
 
-// Admin: hand a cashier a bulk float of physical coins (e.g. 200 coins)
-api.post('/coin-allocations', authenticate, requireAdmin, async (req: AuthRequest, res) => {
+// Admin / Developer: hand a cashier / counter a bulk float of physical coins
+api.post('/coin-allocations', authenticate, requireAdminOrDeveloper, async (req: AuthRequest, res) => {
   const { cashierId, initialCoins, notes } = req.body;
   const coins = parseInt(initialCoins, 10);
 
   if (!cashierId || !Number.isFinite(coins) || coins < 1) {
-    res.status(400).json({ error: 'Select a cashier and enter a valid number of coins (minimum 1).' });
+    res.status(400).json({ error: 'Select a staff member and enter a valid number of coins (minimum 1).' });
     return;
   }
 
   const db = await readDb();
-  const cashier = db.users.find(u => u.id === cashierId && u.role === 'CASHIER');
-  if (!cashier) {
-    res.status(404).json({ error: 'Cashier account not found.' });
+  const staff = db.users.find(u => u.id === cashierId);
+  if (!staff) {
+    res.status(404).json({ error: 'Staff account not found.' });
     return;
   }
-  if (!cashier.isActive) {
-    res.status(400).json({ error: `Cannot allocate coins to deactivated cashier ${cashier.name}.` });
+  if (!staff.isActive) {
+    res.status(400).json({ error: `Cannot allocate coins to deactivated staff ${staff.name}.` });
     return;
   }
 
   const now = new Date();
   const allocation: CoinAllocation = {
     id: `coin_alloc_${crypto.randomUUID()}`,
-    cashierId: cashier.id,
-    cashierName: cashier.name,
+    cashierId: staff.id,
+    cashierName: staff.name,
     allocatedBy: req.user!.id,
     allocatedByName: req.user!.name,
     initialCoins: coins,
@@ -2380,19 +2735,19 @@ api.post('/coin-allocations', authenticate, requireAdmin, async (req: AuthReques
     allocation.id,
     {
       newValues: {
-        cashierName: cashier.name,
+        cashierName: staff.name,
         initialCoins: coins,
         notes: allocation.notes,
         businessDate: allocation.businessDate,
       },
-      reason: `Bulk coin float of ${coins} coins issued to ${cashier.name}`,
+      reason: `Bulk coin float of ${coins} coins issued to ${staff.name}`,
     }
   );
 
   res.status(201).json({ allocation });
 });
 
-api.get('/coin-allocations', authenticate, requireAdmin, async (req, res) => {
+api.get('/coin-allocations', authenticate, requireFinancialOrAdmin, async (req, res) => {
   const db = await readDb();
   let list = [...db.coinAllocations];
 
@@ -2404,9 +2759,11 @@ api.get('/coin-allocations', authenticate, requireAdmin, async (req, res) => {
   res.json({ allocations: list });
 });
 
-// Live computed coin float per cashier. Cashier sees only their own.
+// Live computed coin float per cashier / counter.
+// Coins carry forward day-to-day and do not reset to 0 at midnight.
 api.get('/coin-balances', authenticate, async (req: AuthRequest, res) => {
   const db = await readDb();
+  const activePool = computeActiveCoinPool(db);
 
   const today = getLagosDateString(new Date());
   const startDate = (req.query.startDate as string) || today;
@@ -2418,11 +2775,23 @@ api.get('/coin-balances', authenticate, async (req: AuthRequest, res) => {
 
   const balances = targetCashiers.map(c => computeCoinBalance(db, c.id, c.name, startDate, endDate));
 
-  res.json({ balances, startDate, endDate });
+  res.json({
+    balances,
+    activePool: {
+      totalAllocated: activePool.totalAllocated,
+      totalSold: activePool.totalSold,
+      totalVoidedLost: activePool.totalVoidedLost,
+      totalCompensated: activePool.totalCompensated,
+      remainingCoins: activePool.remainingCoins,
+      activeCount: activePool.activeAllocations.length,
+    },
+    startDate,
+    endDate,
+  });
 });
 
-// Admin: end-of-shift physical coin count — detects shortage / theft / loss
-api.post('/coin-allocations/:id/close', authenticate, requireAdmin, async (req: AuthRequest, res) => {
+// Admin / Developer: end-of-shift physical coin count — detects shortage / theft / loss
+api.post('/coin-allocations/:id/close', authenticate, requireAdminOrDeveloper, async (req: AuthRequest, res) => {
   const { actualRemainingCoins, notes } = req.body;
   const actual = parseInt(actualRemainingCoins, 10);
 
@@ -2443,8 +2812,6 @@ api.post('/coin-allocations/:id/close', authenticate, requireAdmin, async (req: 
     return;
   }
 
-  // Expected remaining computed across ALL of this cashier's allocations on
-  // the same business date, so multiple allocations in a day reconcile together.
   const balance = computeCoinBalance(db, allocation.cashierId, allocation.cashierName, allocation.businessDate, allocation.businessDate);
   const expected = balance.expectedRemainingCoins;
   const discrepancy = actual - expected;
@@ -2592,8 +2959,8 @@ api.get('/bank-accounts', authenticate, async (req, res) => {
   res.json({ accounts });
 });
 
-// Admin: create or edit any slot anytime
-api.put('/bank-accounts/:slot', authenticate, requireAdmin, async (req: AuthRequest, res) => {
+// Admin / Accountant: create or edit any slot anytime
+api.put('/bank-accounts/:slot', authenticate, requireFinancialOrAdmin, async (req: AuthRequest, res) => {
   const slot = parseInt(req.params.slot, 10);
   if (![1, 2, 3].includes(slot)) {
     res.status(400).json({ error: 'Only 3 bank account slots are supported (1, 2 or 3).' });
@@ -2691,7 +3058,7 @@ api.put('/bank-accounts/:slot', authenticate, requireAdmin, async (req: AuthRequ
 // voids, coin allocations, bank account edits, etc.) must survive forever
 // so shortage/theft investigations cannot be covered up.
 
-api.get('/audit-logs', authenticate, requireAdmin, async (req, res) => {
+api.get('/audit-logs', authenticate, requireAdminOrDeveloper, async (req, res) => {
   const db = await readDb();
   let logs = [...db.auditLogs];
 
@@ -2740,7 +3107,7 @@ api.get('/audit-logs', authenticate, requireAdmin, async (req, res) => {
   });
 });
 
-api.delete('/audit-logs/clear', authenticate, requireAdmin, async (req: AuthRequest, res) => {
+api.delete('/audit-logs/clear', authenticate, requireAdminOrDeveloper, async (req: AuthRequest, res) => {
   const db = await readDb();
   const fsDb = getFirestore();
   const snap = await getDocs(collection(fsDb, 'auditLogs'));
@@ -2755,7 +3122,7 @@ api.delete('/audit-logs/clear', authenticate, requireAdmin, async (req: AuthRequ
 // 8. CSV EXPORT
 // ==========================================
 
-api.get('/export/transactions.csv', authenticate, requireAdmin, async (req: AuthRequest, res) => {
+api.get('/export/transactions.csv', authenticate, requireFinancialOrAdmin, async (req: AuthRequest, res) => {
   const db = await readDb();
   let list = [...db.transactions];
 

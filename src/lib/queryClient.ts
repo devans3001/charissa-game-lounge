@@ -30,6 +30,7 @@ export const queryKeys = {
   coinAllocations: () => ['coinAllocations'] as const,
   coinCompensations: () => ['coinCompensations'] as const,
   cashiers: () => ['cashiers'] as const,
+  users: (role?: string) => ['users', { role: role || 'all' }] as const,
   reconciliation: (date: string) => ['reconciliation', date] as const,
   correctionRequests: () => ['correctionRequests'] as const,
   auditLogs: (params: Record<string, any>) => ['auditLogs', params] as const,

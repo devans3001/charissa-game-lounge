@@ -46,30 +46,55 @@ export function Navigation() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
 
-  const isAdmin = user?.role === 'ADMIN';
+  const role = user?.role;
+  const isAdmin = role === 'ADMIN';
 
-  const navItems: NavItem[] = isAdmin
-    ? [
-        { to: '/', label: 'Dashboard', icon: LayoutDashboard },
-        { to: '/newsale', label: 'New Sale (POS)', icon: PlusCircle },
-        { to: '/tabs', label: 'Saved Tabs (Open)', icon: BookmarkCheck },
-        { to: '/transactions', label: 'All Transactions', icon: Receipt },
-        { to: '/reconciliation', label: 'Daily Reconciliation', icon: Scale },
-        { to: '/coinvault', label: 'Coin Vault', icon: Coins },
-        { to: '/bank_accounts', label: 'Transfer Accounts', icon: Landmark },
-        { to: '/games', label: 'Games & Pricing', icon: Gamepad2 },
-        { to: '/cashiers', label: 'Cashier Accounts', icon: Users },
-        { to: '/correction_requests', label: 'Fix Requests', icon: FileQuestion },
-        { to: '/audit', label: 'Audit Trail', icon: ShieldCheck },
-      ]
-    : [
-        { to: '/newsale', label: 'New Sale (POS)', icon: PlusCircle },
-        { to: '/tabs', label: 'Saved Tabs', icon: BookmarkCheck },
-        { to: '/coinvault', label: 'My Coin Float', icon: Coins },
-        { to: '/transactions', label: 'My Transactions', icon: Receipt },
-        { to: '/', label: 'My Shift Overview', icon: LayoutDashboard },
-        { to: '/correction_requests', label: 'My Fix Requests', icon: FileQuestion },
-      ];
+  let navItems: NavItem[] = [];
+  if (role === 'ADMIN') {
+    navItems = [
+      { to: '/', label: 'Dashboard', icon: LayoutDashboard },
+      { to: '/newsale', label: 'New Sale (POS)', icon: PlusCircle },
+      { to: '/tabs', label: 'Saved Tabs (Open)', icon: BookmarkCheck },
+      { to: '/transactions', label: 'All Transactions', icon: Receipt },
+      { to: '/reconciliation', label: 'Daily Reconciliation', icon: Scale },
+      { to: '/coinvault', label: 'Coin Vault', icon: Coins },
+      { to: '/bank_accounts', label: 'Transfer Accounts', icon: Landmark },
+      { to: '/games', label: 'Games & Pricing', icon: Gamepad2 },
+      { to: '/cashiers', label: 'Staff & Accounts', icon: Users },
+      { to: '/correction_requests', label: 'Fix Requests', icon: FileQuestion },
+      { to: '/audit', label: 'Audit Trail', icon: ShieldCheck },
+    ];
+  } else if (role === 'DEVELOPER') {
+    navItems = [
+      { to: '/games', label: 'Games & Pricing', icon: Gamepad2 },
+      { to: '/coinvault', label: 'Coin Vault', icon: Coins },
+      { to: '/cashiers', label: 'Staff & Accounts', icon: Users },
+      { to: '/correction_requests', label: 'Fix Requests', icon: FileQuestion },
+      { to: '/audit', label: 'Audit Trail', icon: ShieldCheck },
+      { to: '/transactions', label: 'All Transactions', icon: Receipt },
+      { to: '/', label: 'System Overview', icon: LayoutDashboard },
+      { to: '/newsale', label: 'POS Terminal (Test)', icon: PlusCircle },
+      { to: '/tabs', label: 'Saved Tabs', icon: BookmarkCheck },
+    ];
+  } else if (role === 'ACCOUNTANT') {
+    navItems = [
+      { to: '/', label: 'Financial Overview', icon: LayoutDashboard },
+      { to: '/reconciliation', label: 'Daily Reconciliation', icon: Scale },
+      { to: '/transactions', label: 'All Transactions', icon: Receipt },
+      { to: '/coinvault', label: 'Coin Vault & Float', icon: Coins },
+      { to: '/bank_accounts', label: 'Transfer Accounts', icon: Landmark },
+    ];
+  } else {
+    // CASHIER
+    navItems = [
+      { to: '/newsale', label: 'New Sale (POS)', icon: PlusCircle },
+      { to: '/tabs', label: 'Saved Tabs', icon: BookmarkCheck },
+      { to: '/coinvault', label: 'My Coin Float', icon: Coins },
+      { to: '/transactions', label: 'My Transactions', icon: Receipt },
+      { to: '/', label: 'My Shift Overview', icon: LayoutDashboard },
+      { to: '/correction_requests', label: 'My Fix Requests', icon: FileQuestion },
+    ];
+  }
 
   const handleLogout = () => {
     logout();
@@ -154,7 +179,19 @@ export function Navigation() {
         <div className="flex items-center gap-3 shrink-0">
           <div className="hidden sm:flex flex-col text-right">
             <span className="text-xs font-semibold text-white whitespace-nowrap">{user?.name}</span>
-            <span className="text-[10px] text-slate-400 font-mono uppercase">{user?.role}</span>
+            <span
+              className={`text-[9px] font-mono uppercase font-bold tracking-wider px-2 py-0.5 rounded-full inline-block self-end mt-0.5 ${
+                role === 'ADMIN'
+                  ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                  : role === 'DEVELOPER'
+                  ? 'bg-purple-500/15 text-purple-400 border border-purple-500/30'
+                  : role === 'ACCOUNTANT'
+                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                  : 'bg-blue-500/15 text-blue-400 border border-blue-500/30'
+              }`}
+            >
+              {user?.role}
+            </span>
           </div>
 
           <button
@@ -183,7 +220,13 @@ export function Navigation() {
         <aside className="w-64 border-r border-slate-800/80 bg-slate-900/50 hidden md:flex flex-col justify-between p-4 shrink-0 no-print sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto self-start">
           <div className="space-y-1">
             <div className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-              {isAdmin ? 'Management Console' : 'Cashier Counter'}
+              {role === 'ADMIN'
+                ? 'Super Admin Console'
+                : role === 'DEVELOPER'
+                ? 'Developer Console'
+                : role === 'ACCOUNTANT'
+                ? 'Financial Portal'
+                : 'Cashier Counter'}
             </div>
 
             {navItems.map(item => {

@@ -87,3 +87,31 @@ export function nairaToKobo(nairaStr: string | number): number {
 export function koboToNaira(kobo: number): number {
   return (kobo || 0) / 100;
 }
+
+// Validate and normalize Nigerian phone numbers (e.g. 08012345678, +2348012345678)
+export function validateAndNormalizeNigerianPhone(phone: string): {
+  isValid: boolean;
+  normalized?: string;
+  error?: string;
+} {
+  if (!phone || typeof phone !== 'string') {
+    return { isValid: false, error: 'Phone number is required.' };
+  }
+  let clean = phone.trim().replace(/[\s\-\(\)\.]/g, '');
+  if (clean.startsWith('+234')) {
+    clean = '0' + clean.slice(4);
+  } else if (clean.startsWith('234') && clean.length === 13) {
+    clean = '0' + clean.slice(3);
+  }
+
+  // Nigerian numbers start with 0 and 7, 8, or 9, then 0 or 1, and 8 digits (total 11 digits)
+  const regex = /^0[789][01]\d{8}$/;
+  if (!regex.test(clean)) {
+    return {
+      isValid: false,
+      error: 'Please enter a valid 11-digit Nigerian mobile number starting with 070, 080, 081, 090, or 091 (e.g. 08012345678 or +234...).',
+    };
+  }
+
+  return { isValid: true, normalized: clean };
+}

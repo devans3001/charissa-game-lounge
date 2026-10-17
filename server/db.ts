@@ -17,6 +17,7 @@ import {
 } from 'firebase/firestore';
 import {
   User,
+  UserRole,
   Game,
   Transaction,
   CustomerTab,
@@ -490,7 +491,7 @@ export function ensureSettings(db: DbSchema): void {
 
 // Log audit helper (append-only — audit logs are NEVER updated or deleted)
 export async function addAuditLog(
-  actor: { id: string; name: string; role: 'ADMIN' | 'CASHIER' | 'SYSTEM' },
+  actor: { id: string; name: string; role: UserRole | 'SYSTEM' },
   action: string,
   entityType:
     | 'TRANSACTION'

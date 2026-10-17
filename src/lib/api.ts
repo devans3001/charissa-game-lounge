@@ -1,5 +1,6 @@
 import {
   User,
+  UserRole,
   Game,
   Transaction,
   CustomerTab,
@@ -318,6 +319,35 @@ export const api = {
     },
   },
 
+  users: {
+    list: (role?: UserRole) => {
+      const q = role ? `?role=${role}` : '';
+      return request<{
+        users: (User & {
+          totalTransactions: number;
+          totalSalesKobo: number;
+          todayTransactions: number;
+          todaySalesKobo: number;
+        })[];
+      }>(`/api/users${q}`);
+    },
+    create: (data: { name: string; phoneNumber: string; role?: UserRole }) =>
+      request<{ user: User }>('/api/users', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    toggleStatus: (id: string, isActive: boolean) =>
+      request<{ user: User }>(`/api/users/${id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ isActive }),
+      }),
+    resetPassword: (id: string, newPassword?: string) =>
+      request<{ message: string }>(`/api/users/${id}/reset-password`, {
+        method: 'POST',
+        body: JSON.stringify({ newPassword }),
+      }),
+  },
+
   cashiers: {
     list: () =>
       request<{
@@ -328,17 +358,17 @@ export const api = {
           todaySalesKobo: number;
         })[];
       }>('/api/cashiers'),
-    create: (data: { name: string; phoneNumber: string }) =>
-      request<{ cashier: User }>('/api/cashiers', {
+    create: (data: { name: string; phoneNumber: string; role?: UserRole }) =>
+      request<{ cashier: User; user: User }>('/api/cashiers', {
         method: 'POST',
         body: JSON.stringify(data),
       }),
     toggleStatus: (id: string, isActive: boolean) =>
-      request<{ cashier: User }>(`/api/cashiers/${id}/status`, {
+      request<{ cashier: User; user: User }>(`/api/cashiers/${id}/status`, {
         method: 'PATCH',
         body: JSON.stringify({ isActive }),
       }),
-    resetPassword: (id: string, newPassword: string) =>
+    resetPassword: (id: string, newPassword?: string) =>
       request<{ message: string }>(`/api/cashiers/${id}/reset-password`, {
         method: 'POST',
         body: JSON.stringify({ newPassword }),
