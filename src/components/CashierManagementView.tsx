@@ -246,18 +246,23 @@ export function CashierManagementView() {
     }
   };
 
+  // Staff list — ADMIN only sees CASHIER accounts; DEVELOPER sees all roles
+  const displayStaff = isDeveloper ? staffList : staffList.filter(s => s.role === 'CASHIER');
+
   // Filtered staff
-  const filteredStaff = staffList.filter(s => {
+  const filteredStaff = displayStaff.filter(s => {
     if (activeRoleFilter === 'ALL') return true;
     return s.role === activeRoleFilter;
   });
 
   const countByRole = {
-    ALL: staffList.length,
-    CASHIER: staffList.filter(s => s.role === 'CASHIER').length,
-    ACCOUNTANT: staffList.filter(s => s.role === 'ACCOUNTANT').length,
-    ADMIN: staffList.filter(s => s.role === 'ADMIN').length,
-    DEVELOPER: staffList.filter(s => s.role === 'DEVELOPER').length,
+    ALL: displayStaff.length,
+    CASHIER: displayStaff.filter(s => s.role === 'CASHIER').length,
+    ...(isDeveloper && {
+      ACCOUNTANT: staffList.filter(s => s.role === 'ACCOUNTANT').length,
+      ADMIN: staffList.filter(s => s.role === 'ADMIN').length,
+      DEVELOPER: staffList.filter(s => s.role === 'DEVELOPER').length,
+    }),
   };
 
   return (
@@ -267,10 +272,12 @@ export function CashierManagementView() {
         <div>
           <h2 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
             <Users className="w-6 h-6 text-indigo-400" />
-            Staff & System Accounts
+            {isDeveloper ? 'Staff & System Accounts' : 'Cashier Management'}
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Create and manage Cashiers, Administrators, Accountants, and Developers · Nigerian Phone Verification · Role Access Control
+            {isDeveloper
+              ? 'Create and manage Cashiers, Administrators, Accountants, and Developers · Nigerian Phone Verification · Role Access Control'
+              : 'Create and manage Cashier accounts · Nigerian Phone Verification'}
           </p>
         </div>
 
@@ -286,7 +293,7 @@ export function CashierManagementView() {
           className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-2 shadow-lg shadow-indigo-600/25 transition cursor-pointer self-start sm:self-auto"
         >
           <UserPlus className="w-4 h-4" />
-          Create New Staff Account
+          {isDeveloper ? 'Create New Staff Account' : 'Create New Cashier Account'}
         </button>
       </div>
 
@@ -316,7 +323,7 @@ export function CashierManagementView() {
 
       {/* Role Overview Bar */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        {(['CASHIER', 'ACCOUNTANT', 'ADMIN', 'DEVELOPER'] as UserRole[]).map(r => {
+        {((isDeveloper ? ['CASHIER', 'ACCOUNTANT', 'ADMIN', 'DEVELOPER'] : ['CASHIER']) as UserRole[]).map(r => {
           const cfg = ROLE_CONFIG[r];
           const Icon = cfg.icon;
           const count = countByRole[r];
@@ -353,22 +360,24 @@ export function CashierManagementView() {
       {/* Filter Tabs */}
       <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
         <div className="flex items-center gap-1.5 p-1 bg-slate-900 border border-slate-800 rounded-xl overflow-x-auto">
-          {(['ALL', 'CASHIER', 'ACCOUNTANT', 'ADMIN', 'DEVELOPER'] as const).map(tab => {
-            const count = countByRole[tab];
+          {(isDeveloper
+            ? (['ALL', 'CASHIER', 'ACCOUNTANT', 'ADMIN', 'DEVELOPER'] as const)
+            : (['ALL', 'CASHIER'] as const)).map(tab => {
+            const count = countByRole[tab as UserRole];
             const isTabActive = activeRoleFilter === tab;
 
             return (
               <button
                 key={tab}
                 type="button"
-                onClick={() => setActiveRoleFilter(tab)}
+                onClick={() => setActiveRoleFilter(tab as 'ALL' | UserRole)}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
                   isTabActive
                     ? 'bg-indigo-600 text-white shadow-sm'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <span>{tab === 'ALL' ? 'All Roles' : ROLE_CONFIG[tab].label}</span>
+                <span>{tab === 'ALL' ? 'All Roles' : ROLE_CONFIG[tab as UserRole].label}</span>
                 <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${isTabActive ? 'bg-indigo-900/60 text-white' : 'bg-slate-800 text-slate-400'}`}>
                   {count}
                 </span>
@@ -378,7 +387,7 @@ export function CashierManagementView() {
         </div>
 
         <div className="text-xs text-slate-400 font-mono">
-          Showing {filteredStaff.length} of {staffList.length} total staff accounts
+          Showing {filteredStaff.length} of {displayStaff.length} {isDeveloper ? 'staff accounts' : 'cashier accounts'}
         </div>
       </div>
 
@@ -388,9 +397,9 @@ export function CashierManagementView() {
       ) : filteredStaff.length === 0 ? (
         <div className="p-12 text-center bg-slate-900/50 border border-slate-800 rounded-2xl">
           <Users className="w-10 h-10 text-slate-600 mx-auto mb-3" />
-          <h4 className="text-sm font-bold text-slate-300">No staff members in this role</h4>
+          <h4 className="text-sm font-bold text-slate-300">No {isDeveloper ? 'staff members' : 'cashiers'} in this role</h4>
           <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
-            Click "Create New Staff Account" above to add an account with Nigerian phone validation.
+            Click "{isDeveloper ? 'Create New Staff Account' : 'Create New Cashier Account'}" above to add an account with Nigerian phone validation.
           </p>
         </div>
       ) : (
