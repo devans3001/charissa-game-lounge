@@ -89,6 +89,10 @@ export function CashierManagementView() {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // Role hierarchy: only DEVELOPER can create/manage non-CASHIER accounts.
+  const isDeveloper = currentUser?.role === 'DEVELOPER';
+  const viewerRole = currentUser?.role;
+
   // Tab filter by role
   const [activeRoleFilter, setActiveRoleFilter] = useState<'ALL' | UserRole>('ALL');
 
@@ -185,14 +189,16 @@ export function CashierManagementView() {
 
     try {
       setCreating(true);
+      // Non-developer viewers (e.g. ADMIN) may only provision CASHIER accounts.
+      const roleToCreate = isDeveloper ? newRole : 'CASHIER';
       const res = await createMutation.mutateAsync({
         name: newName.trim(),
         phoneNumber: phoneValidation.normalized,
-        role: newRole,
+        role: roleToCreate,
       });
 
       setSuccessMessage(
-        `${ROLE_CONFIG[newRole].label} account created for "${newName.trim()}"! Initial default password is "${phoneValidation.normalized}". The user will be required to choose a new password upon first login.`
+        `${ROLE_CONFIG[roleToCreate].label} account created for "${newName.trim()}"! Initial default password is "${phoneValidation.normalized}". The user will be required to choose a new password upon first login.`
       );
       setShowAddModal(false);
       setNewName('');
@@ -502,11 +508,13 @@ export function CashierManagementView() {
                 <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2">
                   <button
                     type="button"
-                    disabled={isSelf || isMaster}
+                    disabled={isSelf || isMaster || (!isDeveloper && viewerRole === 'ADMIN' && s.role !== 'CASHIER')}
                     onClick={() => handleToggleStatus(s)}
-                    title={isSelf ? 'Cannot deactivate yourself' : isMaster ? 'Master admin cannot be deactivated' : ''}
+                    title={!isDeveloper && viewerRole === 'ADMIN' && s.role !== 'CASHIER'
+                      ? 'Admins may only activate/deactivate Cashier accounts.'
+                      : isSelf ? 'Cannot deactivate yourself' : isMaster ? 'Master admin cannot be deactivated' : ''}
                     className={`text-xs font-semibold flex items-center gap-1.5 transition ${
-                      isSelf || isMaster
+                      (isSelf || isMaster || (!isDeveloper && viewerRole === 'ADMIN' && s.role !== 'CASHIER'))
                         ? 'text-slate-600 cursor-not-allowed'
                         : s.isActive
                         ? 'text-slate-400 hover:text-rose-400 cursor-pointer'
@@ -528,11 +536,17 @@ export function CashierManagementView() {
 
                   <button
                     type="button"
+                    disabled={isSelf || isMaster || (!isDeveloper && viewerRole === 'ADMIN' && s.role !== 'CASHIER')}
                     onClick={() => {
                       setResetModalUser(s);
                       setResetPasswordVal(s.phoneNumber || '');
                     }}
-                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                    title={!isDeveloper && viewerRole === 'ADMIN' && s.role !== 'CASHIER' ? 'Admins may only reset Cashier passwords.' : ''}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
+                      (isSelf || isMaster || (!isDeveloper && viewerRole === 'ADMIN' && s.role !== 'CASHIER'))
+                        ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                        : 'bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer'
+                    }`}
                   >
                     <KeyRound className="w-3.5 h-3.5 text-indigo-400" />
                     Reset Password
@@ -571,53 +585,63 @@ export function CashierManagementView() {
               <div>
                 <h3 className="text-base font-bold text-white">Provision New Staff Account</h3>
                 <p className="text-xs text-slate-400">
-                  Create Cashiers, Admins, Accountants, or Developers with verified Nigerian credentials
+                  {isDeveloper ? 'Create Cashiers, Admins, Accountants, or Developers with verified Nigerian credentials' : 'Admins may only create CASHIER accounts. Role selector is hidden — server enforces CASHIER-only creation.'}
                 </p>
               </div>
             </div>
 
             <form onSubmit={handleCreateStaff} className="space-y-4 mt-5">
               {/* Account Role Selector */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Account Role & Permissions *
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  {(['CASHIER', 'ACCOUNTANT', 'ADMIN', 'DEVELOPER'] as UserRole[]).map(r => {
-                    const cfg = ROLE_CONFIG[r];
-                    const Icon = cfg.icon;
-                    const isSelected = newRole === r;
-
-                    return (
-                      <button
-                        key={r}
-                        type="button"
-                        onClick={() => setNewRole(r)}
-                        className={`p-3 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
-                          isSelected
-                            ? 'bg-indigo-600/20 border-indigo-500 ring-1 ring-indigo-500'
-                            : 'bg-slate-950 border-slate-800 hover:border-slate-700'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 mb-1">
-                          <Icon className={`w-4 h-4 ${isSelected ? 'text-indigo-400' : 'text-slate-400'}`} />
-                          <span className="font-bold text-xs text-white">{cfg.label}</span>
-                        </div>
-                        <span className="text-[10px] text-slate-400 leading-tight">
-                          {r === 'CASHIER'
-                            ? 'POS register & customer tabs'
-                            : r === 'ACCOUNTANT'
-                            ? 'Financial reports & bank reconciliations'
-                            : r === 'ADMIN'
-                            ? 'Full administrative control'
-                            : 'Technical configs, vault & testing'}
-                        </span>
-                      </button>
-                    );
-                  })}
+              {!isDeveloper ? (
+                <div className="p-3 bg-indigo-900/30 border border-indigo-500/30 rounded-xl text-center">
+                  <span className="text-xs font-semibold text-indigo-300 flex items-center justify-center gap-1.5">
+                    <Lock className="w-3 h-3" />
+                    You may only create <strong className="text-indigo-200">CASHIER</strong> accounts.
+                  </span>
                 </div>
-              </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                      Account Role & Permissions *
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(['CASHIER', 'ACCOUNTANT', 'ADMIN', 'DEVELOPER'] as UserRole[]).map(r => {
+                        const cfg = ROLE_CONFIG[r];
+                        const Icon = cfg.icon;
+                        const isSelected = newRole === r;
 
+                        return (
+                          <button
+                            key={r}
+                            type="button"
+                            onClick={() => setNewRole(r)}
+                            className={`p-3 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                              isSelected
+                                ? 'bg-indigo-600/20 border-indigo-500 ring-1 ring-indigo-500'
+                                : 'bg-slate-950 border-slate-800 hover:border-slate-700'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 mb-1">
+                              <Icon className={`w-4 h-4 ${isSelected ? 'text-indigo-400' : 'text-slate-400'}`} />
+                              <span className="font-bold text-xs text-white">{cfg.label}</span>
+                            </div>
+                            <span className="text-[10px] text-slate-400 leading-tight">
+                              {r === 'CASHIER'
+                                ? 'POS register & customer tabs'
+                                : r === 'ACCOUNTANT'
+                                ? 'Financial reports & bank reconciliations'
+                                : r === 'ADMIN'
+                                ? 'Full administrative control'
+                                : 'Technical configs, vault & testing'}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              )}
               {/* Full Name */}
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1">

@@ -2172,7 +2172,7 @@ api.get('/cashiers', authenticate, requireAdminOrDeveloper, async (req, res) => 
   res.json({ cashiers, users: cashiers });
 });
 
-// Create new staff account (Cashier, Admin, Accountant, Developer)
+// Create new staff account (Cashier, Admin, Accountant, Developer) — DEVELOPER only for privileged roles; ADMIN may create CASHIER only
 api.post('/users', authenticate, requireAdminOrDeveloper, async (req: AuthRequest, res) => {
   const { name, phoneNumber, role } = req.body;
 
@@ -2183,6 +2183,12 @@ api.post('/users', authenticate, requireAdminOrDeveloper, async (req: AuthReques
 
   const validRoles: UserRole[] = ['CASHIER', 'ADMIN', 'ACCOUNTANT', 'DEVELOPER'];
   const userRole: UserRole = validRoles.includes(role) ? role : 'CASHIER';
+
+  // Role hierarchy: only DEVELOPER may create ADMIN / ACCOUNTANT / DEVELOPER. ADMIN is restricted to CASHIER.
+  if (req.user!.role === 'ADMIN' && userRole !== 'CASHIER') {
+    res.status(403).json({ error: 'Admins may only create CASHIER accounts. Contact the Developer to create Admin, Accountant, or Developer accounts.' });
+    return;
+  }
 
   // Strict Nigerian phone number validation
   const phoneValidation = validateAndNormalizeNigerianPhone(phoneNumber);
@@ -2265,18 +2271,17 @@ api.post('/users', authenticate, requireAdminOrDeveloper, async (req: AuthReques
   res.status(201).json({ user: safeUser, cashier: safeUser });
 });
 
-// Backward compatibility alias for cashier creation
+// Backward compatibility alias for cashier creation — always CASHIER (ADMIN-safe path)
 api.post('/cashiers', authenticate, requireAdminOrDeveloper, async (req: AuthRequest, res) => {
-  req.body.role = req.body.role || 'CASHIER';
-  const { name, phoneNumber, role } = req.body;
+  const { name, phoneNumber } = req.body;
 
   if (!name || !name.trim() || !phoneNumber || !phoneNumber.trim()) {
     res.status(400).json({ error: 'Staff full name and phone number are required.' });
     return;
   }
 
-  const validRoles: UserRole[] = ['CASHIER', 'ADMIN', 'ACCOUNTANT', 'DEVELOPER'];
-  const userRole: UserRole = validRoles.includes(role) ? role : 'CASHIER';
+  // This alias is strictly for CASHIER creation regardless of any role passed in the body.
+  const userRole: UserRole = 'CASHIER';
 
   const phoneValidation = validateAndNormalizeNigerianPhone(phoneNumber);
   if (!phoneValidation.isValid || !phoneValidation.normalized) {
@@ -2356,7 +2361,7 @@ api.post('/cashiers', authenticate, requireAdminOrDeveloper, async (req: AuthReq
   res.status(201).json({ user: safeUser, cashier: safeUser });
 });
 
-// Toggle staff active/inactive status
+// Toggle staff active/inactive status — ADMIN may only toggle CASHIER accounts
 api.patch('/users/:id/status', authenticate, requireAdminOrDeveloper, async (req: AuthRequest, res) => {
   const { id } = req.params;
   const { isActive } = req.body;
@@ -2383,6 +2388,12 @@ api.patch('/users/:id/status', authenticate, requireAdminOrDeveloper, async (req
     return;
   }
 
+  // Role hierarchy: ADMIN may only change status of CASHIER accounts. DEVELOPER unrestricted.
+  if (req.user!.role === 'ADMIN' && targetUser.role !== 'CASHIER') {
+    res.status(403).json({ error: `Admins may only change status of CASHIER accounts. This is a ${targetUser.role} account.` });
+    return;
+  }
+
   const oldStatus = targetUser.isActive;
   targetUser.isActive = isActive;
   await saveDb(db);
@@ -2417,7 +2428,7 @@ api.patch('/users/:id/status', authenticate, requireAdminOrDeveloper, async (req
   });
 });
 
-// Alias for cashier status toggle
+// Alias for cashier status toggle — CASHIER targets only
 api.patch('/cashiers/:id/status', authenticate, requireAdminOrDeveloper, async (req: AuthRequest, res) => {
   const { id } = req.params;
   const { isActive } = req.body;
@@ -2444,6 +2455,17 @@ api.patch('/cashiers/:id/status', authenticate, requireAdminOrDeveloper, async (
     return;
   }
 
+  // This alias only manages CASHIER accounts.
+  if (targetUser.role !== 'CASHIER') {
+    res.status(403).json({ error: `This endpoint only manages CASHIER accounts. This is a ${targetUser.role} account.` });
+    return;
+  }
+  // Role hierarchy: ADMIN may only change status of CASHIER accounts. DEVELOPER unrestricted.
+  if (req.user!.role === 'ADMIN' && targetUser.role !== 'CASHIER') {
+    res.status(403).json({ error: `Admins may only change status of CASHIER accounts. This is a ${targetUser.role} account.` });
+    return;
+  }
+
   const oldStatus = targetUser.isActive;
   targetUser.isActive = isActive;
   await saveDb(db);
@@ -2478,7 +2500,7 @@ api.patch('/cashiers/:id/status', authenticate, requireAdminOrDeveloper, async (
   });
 });
 
-// Reset staff password (resets to phone number or provided password, with mustChangePassword = true)
+// Reset staff password — ADMIN may only reset CASHIER passwords
 api.post('/users/:id/reset-password', authenticate, requireAdminOrDeveloper, async (req: AuthRequest, res) => {
   const { id } = req.params;
   const { newPassword } = req.body;
@@ -2488,6 +2510,12 @@ api.post('/users/:id/reset-password', authenticate, requireAdminOrDeveloper, asy
 
   if (!targetUser) {
     res.status(404).json({ error: 'User account not found' });
+    return;
+  }
+
+  // Role hierarchy: ADMIN may only reset CASHIER passwords.
+  if (req.user!.role === 'ADMIN' && targetUser.role !== 'CASHIER') {
+    res.status(403).json({ error: `Admins may only reset CASHIER passwords. This is a ${targetUser.role} account.` });
     return;
   }
 
@@ -2513,7 +2541,7 @@ api.post('/users/:id/reset-password', authenticate, requireAdminOrDeveloper, asy
   res.json({ message: `Password for ${targetUser.name} successfully reset.` });
 });
 
-// Alias for cashiers reset-password
+// Alias for cashiers reset-password — CASHIER targets only
 api.post('/cashiers/:id/reset-password', authenticate, requireAdminOrDeveloper, async (req: AuthRequest, res) => {
   const { id } = req.params;
   const { newPassword } = req.body;
@@ -2523,6 +2551,17 @@ api.post('/cashiers/:id/reset-password', authenticate, requireAdminOrDeveloper, 
 
   if (!targetUser) {
     res.status(404).json({ error: 'Cashier account not found' });
+    return;
+  }
+
+  // This alias only manages CASHIER accounts.
+  if (targetUser.role !== 'CASHIER') {
+    res.status(403).json({ error: `This endpoint only manages CASHIER accounts. This is a ${targetUser.role} account.` });
+    return;
+  }
+  // Role hierarchy: ADMIN may only reset CASHIER passwords.
+  if (req.user!.role === 'ADMIN' && targetUser.role !== 'CASHIER') {
+    res.status(403).json({ error: `Admins may only reset CASHIER passwords. This is a ${targetUser.role} account.` });
     return;
   }
 
